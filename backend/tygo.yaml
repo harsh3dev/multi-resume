@@ -1,0 +1,21 @@
+packages:
+  - path: "github.com/harsh3dev/multi-resume/backend/internal/model"
+    output_path: "../apps/web/src/types/generated.ts"
+    type_mappings:
+      Span: "[number, number]"
+      Slot: '"bold" | "italic" | "right" | "left" | "plain"'
+    frontmatter: |
+      export type StrictSpan = [number, number];
+      export type StrictSlot = "bold" | "italic" | "right" | "left" | "plain";
+      export type SectionNode = Entry | BulletList | SkillLine | Paragraph | Opaque;
+      export type Operation =
+        | { op: "edit"; id: string; value: string }
+        | { op: "editUrl"; id: string; url: string }
+        | { op: "add"; listId: string; after: string | null; value: string }
+        | { op: "delete"; id: string }
+        | { op: "reorder"; parentId: string; order: string[] }
+        | { op: "move"; id: string; toEntryId: string; after: string | null }
+        | { op: "hide"; id: string }
+        | { op: "show"; id: string }
+        | { op: "replaceImage"; id: string; assetId: string }
+        | { op: "setStyle"; id: string; value: string };

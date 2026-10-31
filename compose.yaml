@@ -1,0 +1,32 @@
+# Local backend stack: Go backend (with TeX Live + sandbox in its image).
+# The Next.js frontend runs on the host (`npm run dev` in apps/web) and talks
+# to the backend at http://127.0.0.1:8080. Supabase (auth + Postgres) and R2
+# are external services — fill backend/.env from the *.env.example template.
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8080:8080"
+    env_file:
+      - backend/.env
+    environment:
+      PORT: "8080"
+    # bubblewrap (per-compile sandbox) needs unprivileged user namespaces;
+    # Docker's default seccomp profile blocks them, so lift the filter.
+    # systempaths=unconfined unmasks /proc so bwrap can mount a fresh procfs
+    # in its namespace. The container (Docker VM) plus bwrap per compile
+    # remain the isolation layers for untrusted .tex input.
+    security_opt:
+      - seccomp=unconfined
+      - systempaths=unconfined
+    # TeX compilation is CPU-heavy; give it room.
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

@@ -1,4 +1,4 @@
-# Resume Editor
+# Multi Resume
 
 Upload your LaTeX resume, edit it through fields instead of code, tailor it to a job description with AI, and keep one version per job. The `.tex` is the truth; the JSON tree is an index over it; every edit is applied to both and re-verified by parsing.
 
@@ -30,11 +30,22 @@ cp backend/.env.example backend/.env
 Then either run the pieces directly:
 
 ```sh
-cd apps/web && pnpm install && pnpm dev        # Next.js on :3000
+cd apps/web && bun install && bun run dev        # Next.js on :3000
 cd backend && go run ./cmd/server              # Go on :8080
+cd backend && make build                       # binaries -> backend/out/ (server, parse)
 goose -dir backend/db/migrations postgres "$DATABASE_URL" up
 cd backend && sqlc generate && tygo generate   # after schema/type changes
 ```
+
+> **Supabase note:** migrations must use the **session-mode pooler** URL
+> (pooler host, port `5432`), not transaction mode (`:6543`) — goose's
+> prepared statements fail under transaction mode. The direct
+> `db.<ref>.supabase.co` host is IPv6-only. If `DATABASE_URL` points at
+> `:6543`, run:
+>
+> ```sh
+> goose -dir backend/db/migrations postgres "$(grep -m1 '^DATABASE_URL=' backend/.env | cut -d= -f2- | sed 's/:6543\//:5432\//')" up
+> ```
 
 or the whole thing in Docker (TeX Live included in the backend image):
 
@@ -46,7 +57,7 @@ docker compose up --build
 
 ```sh
 cd backend && go test ./...        # parser goldens, engine fuzz, auth matrix, API tests
-cd apps/web && pnpm typecheck && pnpm lint
+cd apps/web && bun run typecheck && bun run lint
 ```
 
 The parser/engine metric tables:

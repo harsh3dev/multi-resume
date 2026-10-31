@@ -1,0 +1,12 @@
+# Local build artifacts and secrets never enter the image.
+server
+out/
+.env
+.env.*
+!.env.example
+
+# Test fixtures are not needed at runtime (integration tests run from source).
+testdata/
+
+# VCS metadata, if this directory is ever built from a checkout.
+.git

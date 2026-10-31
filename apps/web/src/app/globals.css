@@ -1,0 +1,291 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Design tokens — single source of truth.
+ * Every color/radius/shadow/spacing value in the app resolves to a variable
+ * declared here. Components must never use raw palette colors or literals;
+ * retheme by editing this file only.
+ */
+
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.141 0.005 285.823);
+  --card: oklch(0.98 0.002 285);
+  --card-foreground: oklch(0.141 0.005 285.823);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.141 0.005 285.823);
+  --primary: oklch(0.56 0.105 212);
+  --light-primary: oklch(0.74 0.11 200);
+  --dark-primary: oklch(0.44 0.1 218);
+  --primary-foreground: oklch(0.985 0.005 215);
+  --secondary: oklch(0.965 0.003 285);
+  --secondary-foreground: oklch(0.21 0.006 285.885);
+  --muted: oklch(0.965 0.003 285);
+  --muted-foreground: oklch(0.552 0.016 285.938);
+  --accent: oklch(0.95 0.004 285);
+  --accent-foreground: oklch(0.21 0.006 285.885);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  /* Semantic feedback colors — pair with /10 opacity for tinted surfaces. */
+  --success: oklch(0.527 0.154 150.07);
+  --warning: oklch(0.555 0.163 48.99);
+  --border: oklch(0.88 0.004 286.32);
+  --input: oklch(0.83 0.005 286.32);
+  --ring: oklch(0.56 0.105 212);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.988 0.002 285);
+  --sidebar-foreground: oklch(0.141 0.005 285.823);
+  --sidebar-primary: oklch(0.56 0.105 212);
+  --sidebar-primary-foreground: oklch(0.985 0.005 215);
+  --sidebar-accent: oklch(0.955 0.004 285);
+  --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
+  --sidebar-border: oklch(0.88 0.004 286.32);
+  --sidebar-ring: oklch(0.56 0.105 212);
+  /* PDF paper stays white in both themes — it represents printed output. */
+  --pdf-paper: oklch(1 0 0);
+  /* Surface hierarchy: --background (canvas) -> --card (sections, grouped
+     containers) -> --field (inputs). Each level is lighter than the one it sits on.
+     --input is the field BORDER colour, kept separate from the fill. */
+  --field: oklch(0.975 0.002 285);
+  /* Barely-there edge on inputs; focus draws the real border. */
+  --field-border: oklch(0.9 0.003 285);
+  /* Focused field: a slightly shifted fill instead of an outline. Mixed in oklab
+     (oklch would swing the hue through pink when blending into white) with the
+     foreground, so it is a neutral shade of the field in both themes. Defined once
+     here; .dark sits on the same element, so it follows --field/--foreground. */
+  --field-focus: color-mix(in oklab, var(--field), var(--foreground) 2.5%);
+  /* The raised main panel: a wide, soft elevation instead of a hard edge. */
+  --elevation-panel: 0 0 0 1px oklch(0 0 0 / 0.035), 0 2px 6px -2px oklch(0 0 0 / 0.05), 0 14px 36px -10px oklch(0 0 0 / 0.1);
+  /* 3D tokens: filled buttons, softer controls, and the sunken tab track. */
+  --shadow-bevel: inset 0 1px 0 0 oklch(1 0 0 / 0.28), inset 0 -1px 0 0 oklch(0 0 0 / 0.14);
+  --shadow-bevel-soft: inset 0 1px 0 0 oklch(1 0 0 / 0.9), inset 0 -1px 0 0 oklch(0 0 0 / 0.04);
+  --shadow-track: inset 0 1px 1px 0 oklch(0 0 0 / 0.035);
+  /* Action bar tucked behind a bullet: shaded under the card above and deeper along the bottom. */
+  --shadow-chin: inset 0 1px 2px 0 oklch(0 0 0 / 0.035), inset 0 -2px 4px -3px oklch(0 0 0 / 0.05);
+  /* Fill of the action bar behind a bullet: clearly darker than the card in front. */
+  --chin: oklch(0.935 0.003 285);
+  /* Placeholder bars on the paper while a PDF loads: barely darker than paper. */
+  --pdf-skeleton: oklch(0.955 0 0);
+  --radius: 0.5rem;
+  --shadow-2xs: 0 1px 3px 0px oklch(0 0 0 / 0.05);
+  --shadow-xs: 0 1px 3px 0px oklch(0 0 0 / 0.05);
+  --shadow-sm: 0 1px 3px 0px oklch(0 0 0 / 0.1), 0 1px 2px -1px oklch(0 0 0 / 0.1);
+  --shadow: 0 1px 3px 0px oklch(0 0 0 / 0.1), 0 1px 2px -1px oklch(0 0 0 / 0.1);
+  --shadow-md: 0 1px 3px 0px oklch(0 0 0 / 0.1), 0 2px 4px -1px oklch(0 0 0 / 0.1);
+  --shadow-lg: 0 1px 3px 0px oklch(0 0 0 / 0.1), 0 4px 6px -1px oklch(0 0 0 / 0.1);
+  --shadow-xl: 0 1px 3px 0px oklch(0 0 0 / 0.1), 0 8px 10px -1px oklch(0 0 0 / 0.1);
+  --shadow-2xl: 0 1px 3px 0px oklch(0 0 0 / 0.25);
+  --tracking-normal: 0em;
+  --tracking-tight: -0.015em;
+  --tracking-tighter: -0.025em;
+  --spacing: 0.25rem;
+}
+
+.dark {
+  --background: oklch(0.1535 0.005 286.87);
+  --foreground: oklch(0.98 0 0);
+  --card: oklch(0.1902 0.006 307.43);
+  --card-foreground: oklch(0.98 0 0);
+  --popover: oklch(0.16 0.006 285);
+  --popover-foreground: oklch(0.98 0 0);
+  --primary: oklch(0.56 0.105 212);
+  --light-primary: oklch(0.74 0.11 200);
+  --dark-primary: oklch(0.44 0.1 218);
+  --primary-foreground: oklch(0.985 0.005 215);
+  --secondary: oklch(0.22 0.007 285);
+  --secondary-foreground: oklch(0.98 0 0);
+  --muted: oklch(0.22 0.007 285);
+  --muted-foreground: oklch(0.68 0.01 285);
+  --accent: oklch(0.24 0.008 285);
+  --accent-foreground: oklch(0.98 0 0);
+  --destructive: oklch(0.58 0.2383 25.05);
+  --destructive-foreground: oklch(0.985 0 0);
+  /* Brighter in dark mode so tinted (opacity) surfaces keep contrast. */
+  --success: oklch(0.765 0.177 163.223);
+  --warning: oklch(0.828 0.189 84.429);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 18%);
+  --ring: oklch(0.62 0.11 208);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0.006 285);
+  --sidebar-foreground: oklch(0.98 0 0);
+  --sidebar-primary: oklch(0.56 0.105 212);
+  --sidebar-primary-foreground: oklch(0.985 0.005 215);
+  --sidebar-accent: oklch(0.275 0.008 285);
+  --sidebar-accent-foreground: oklch(0.98 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.62 0.11 208);
+  --pdf-paper: oklch(1 0 0);
+  --elevation-panel: 0 1px 2px 0 oklch(0 0 0 / 0.25), 0 14px 36px -12px oklch(0 0 0 / 0.55);
+  --field: oklch(0.2 0.007 285);
+  --field-focus: color-mix(in oklab, var(--field), var(--foreground) 6%);
+  /* Barely-there edge on inputs; focus draws the real border. */
+  --field-border: oklch(1 0 0 / 7%);
+  --shadow-bevel: inset 0 1px 0 0 oklch(1 0 0 / 0.2), inset 0 -1px 0 0 oklch(0 0 0 / 0.22);
+  --shadow-bevel-soft: inset 0 1px 0 0 oklch(1 0 0 / 0.07), inset 0 -1px 0 0 oklch(0 0 0 / 0.18);
+  --shadow-track: inset 0 1px 3px 0 oklch(0 0 0 / 0.4);
+  --shadow-chin: inset 0 2px 3px 0 oklch(0 0 0 / 0.4), inset 0 -4px 7px -3px oklch(0 0 0 / 0.7);
+  --chin: oklch(0.135 0.005 286.87);
+  --pdf-skeleton: oklch(0.955 0 0);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-light-primary: var(--light-primary);
+  --color-dark-primary: var(--dark-primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-pdf-paper: var(--pdf-paper);
+  --color-pdf-skeleton: var(--pdf-skeleton);
+  --color-field: var(--field);
+  --color-field-border: var(--field-border);
+  --color-field-focus: var(--field-focus);
+  --color-chin: var(--chin);
+  --shadow-panel: var(--elevation-panel);
+  --inset-shadow-bevel: var(--shadow-bevel);
+  --inset-shadow-bevel-soft: var(--shadow-bevel-soft);
+  --inset-shadow-track: var(--shadow-track);
+  --inset-shadow-chin: var(--shadow-chin);
+
+  --font-sans: var(--font-geist-sans);
+  --font-serif: var(--font-instrument-serif);
+  --font-mono: var(--font-geist-mono);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+
+  --shadow-2xs: var(--shadow-2xs);
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow: var(--shadow);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-xl: var(--shadow-xl);
+  --shadow-2xl: var(--shadow-2xl);
+
+  --tracking-normal: var(--tracking-normal);
+  --tracking-tight: var(--tracking-tight);
+  --tracking-tighter: var(--tracking-tighter);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  ::selection {
+    @apply bg-primary/80 text-primary-foreground;
+  }
+}
+
+/* Reduced motion: collapse every CSS animation/transition. JS animation is
+   gated separately through useMotion() in src/lib/motion.ts. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Theme switch: View Transitions API. The new theme is revealed through a soft-
+   edged circle (an alpha mask) that grows from the toggle button. ThemeSwitch
+   sets --vt-x/--vt-y (button centre) and --vt-end (radius that covers the
+   farthest corner) on <html> before starting the transition. */
+@property --vt-r {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+:root {
+  --expo-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --vt-soft: 56px; /* width of the blurred edge */
+}
+::view-transition-group(root) {
+  animation-timing-function: var(--expo-out);
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  mix-blend-mode: normal;
+}
+::view-transition-old(root) {
+  animation: none;
+  z-index: -1;
+}
+::view-transition-new(root) {
+  mask-image: radial-gradient(
+    circle at var(--vt-x, 0px) var(--vt-y, 0px),
+    #000 var(--vt-r),
+    transparent calc(var(--vt-r) + var(--vt-soft))
+  );
+  animation: theme-reveal 0.9s both;
+}
+@keyframes theme-reveal {
+  from {
+    --vt-r: calc(var(--vt-soft) * -1);
+  }
+  to {
+    --vt-r: var(--vt-end, 150vmax);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
