@@ -49,30 +49,16 @@
   --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
   --sidebar-border: oklch(0.88 0.004 286.32);
   --sidebar-ring: oklch(0.56 0.105 212);
-  /* PDF paper stays white in both themes — it represents printed output. */
   --pdf-paper: oklch(1 0 0);
-  /* Surface hierarchy: --background (canvas) -> --card (sections, grouped
-     containers) -> --field (inputs). Each level is lighter than the one it sits on.
-     --input is the field BORDER colour, kept separate from the fill. */
   --field: oklch(0.975 0.002 285);
-  /* Barely-there edge on inputs; focus draws the real border. */
   --field-border: oklch(0.9 0.003 285);
-  /* Focused field: a slightly shifted fill instead of an outline. Mixed in oklab
-     (oklch would swing the hue through pink when blending into white) with the
-     foreground, so it is a neutral shade of the field in both themes. Defined once
-     here; .dark sits on the same element, so it follows --field/--foreground. */
   --field-focus: color-mix(in oklab, var(--field), var(--foreground) 2.5%);
-  /* The raised main panel: a wide, soft elevation instead of a hard edge. */
   --elevation-panel: 0 0 0 1px oklch(0 0 0 / 0.035), 0 2px 6px -2px oklch(0 0 0 / 0.05), 0 14px 36px -10px oklch(0 0 0 / 0.1);
-  /* 3D tokens: filled buttons, softer controls, and the sunken tab track. */
   --shadow-bevel: inset 0 1px 0 0 oklch(1 0 0 / 0.28), inset 0 -1px 0 0 oklch(0 0 0 / 0.14);
   --shadow-bevel-soft: inset 0 1px 0 0 oklch(1 0 0 / 0.9), inset 0 -1px 0 0 oklch(0 0 0 / 0.04);
   --shadow-track: inset 0 1px 1px 0 oklch(0 0 0 / 0.035);
-  /* Action bar tucked behind a bullet: shaded under the card above and deeper along the bottom. */
   --shadow-chin: inset 0 1px 2px 0 oklch(0 0 0 / 0.035), inset 0 -2px 4px -3px oklch(0 0 0 / 0.05);
-  /* Fill of the action bar behind a bullet: clearly darker than the card in front. */
   --chin: oklch(0.935 0.003 285);
-  /* Placeholder bars on the paper while a PDF loads: barely darker than paper. */
   --pdf-skeleton: oklch(0.955 0 0);
   --radius: 0.5rem;
   --shadow-2xs: 0 1px 3px 0px oklch(0 0 0 / 0.05);
@@ -237,6 +223,13 @@
   ::selection {
     @apply bg-primary/80 text-primary-foreground;
   }
+}
+
+/* PDF.js positions invisible text over its canvas to enable selection. Keep
+   selected glyphs invisible too: the global selection foreground otherwise
+   paints a second, white copy on top of the printed PDF lettering. */
+.react-pdf__Page .textLayer ::selection {
+  color: transparent;
 }
 
 /* Reduced motion: collapse every CSS animation/transition. JS animation is

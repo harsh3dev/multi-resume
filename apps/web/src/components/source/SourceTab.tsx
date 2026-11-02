@@ -5,7 +5,7 @@ import { StreamLanguage } from "@codemirror/language";
 import { stex } from "@codemirror/legacy-modes/mode/stex";
 import { useTheme } from "next-themes";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/ui/components/actions/button";
 import { useEditor } from "@/lib/store/editor";
 
 // SourceTab edits raw .tex. The text lives in the editor store (not here), so

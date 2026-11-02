@@ -1,9 +1,9 @@
 "use client";
 
-import { Edit2 } from "iconsax-react";
+import { Edit2 } from "@/icons";
 import { useEffect, useState } from "react";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/ui/components/actions/button";
 import {
   Dialog,
   DialogContent,
@@ -12,10 +12,10 @@ import {
   DialogHeader,
   DialogIcon,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Field } from "@/components/ui/field";
-import { AppIcon } from "@/components/ui/icon";
-import { Input } from "@/components/ui/input";
+} from "@/components/ui/components/overlays/dialog";
+import { Field } from "@/components/ui/components/forms/field";
+import { AppIcon } from "@/icons";
+import { Input } from "@/components/ui/components/forms/input";
 
 /**
  * Generic "rename" dialog (resumes and versions). `onSubmit` resolves to close

@@ -1,12 +1,12 @@
 "use client";
 
-import { Warning2 } from "iconsax-react";
+import { Warning2 } from "@/icons";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { use, useEffect, useState } from "react";
 
-import { buttonVariants } from "@/components/ui/button";
-import { EmptyState } from "@/components/ui/empty-state";
+import { buttonVariants } from "@/components/ui/components/actions/button";
+import { EmptyState } from "@/components/ui/components/display/empty-state";
 import { apiJSON } from "@/lib/api/client";
 
 /**

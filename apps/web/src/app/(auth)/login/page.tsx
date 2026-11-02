@@ -3,8 +3,8 @@
 import { useState } from "react";
 
 import { ThemeSwitch } from "@/components/theme-switch";
-import { Button } from "@/components/ui/button";
-import { LogoTile } from "@/components/ui/logo";
+import { Button } from "@/components/ui/components/actions/button";
+import { LogoTile } from "@/components/ui/components/display/logo";
 import { createClient, supabaseConfigured } from "@/lib/supabase/client";
 
 export default function LoginPage() {

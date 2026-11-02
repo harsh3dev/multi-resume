@@ -9,8 +9,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
-import { AppIcon, type IconsaxIcon } from "@/components/ui/icon";
-import { cn } from "@/lib/utils";
+import { AppIcon, type IconsaxIcon } from "@/icons";
+import { cn } from "@/lib/utils/utils";
 
 /**
  * The shell owns one header bar. Pages put their title and actions into it

@@ -1,8 +1,8 @@
 import Link from "next/link";
 
 import { ThemeSwitch } from "@/components/theme-switch";
-import { Button } from "@/components/ui/button";
-import { LogoTile } from "@/components/ui/logo";
+import { Button } from "@/components/ui/components/actions/button";
+import { LogoTile } from "@/components/ui/components/display/logo";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function LandingPage() {

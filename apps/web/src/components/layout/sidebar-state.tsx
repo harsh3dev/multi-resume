@@ -1,6 +1,6 @@
 "use client";
 
-import { SidebarLeft } from "iconsax-react";
+import { SidebarLeft } from "@/icons";
 import {
   createContext,
   useCallback,
@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { IconButton } from "@/components/ui/icon-button";
+import { IconButton } from "@/components/ui/components/actions/icon-button";
 
 export const SIDEBAR_COOKIE = "sidebar_state";
 const MOBILE_QUERY = "(max-width: 767px)";

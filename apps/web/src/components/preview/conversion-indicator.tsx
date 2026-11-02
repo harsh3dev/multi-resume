@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 
-import { useMotion } from "@/lib/motion";
+import { useMotion } from "@/lib/components/motion";
 import { useEditor } from "@/lib/store/editor";
 
 // A two-way funnel: streaks race in a straight line through the wide mouth on

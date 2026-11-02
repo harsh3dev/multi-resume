@@ -1,9 +1,9 @@
 "use client";
 
-import { Save2 } from "iconsax-react";
+import { Save2 } from "@/icons";
 import { useState } from "react";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/ui/components/actions/button";
 import {
   Dialog,
   DialogContent,
@@ -12,10 +12,10 @@ import {
   DialogHeader,
   DialogIcon,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Field } from "@/components/ui/field";
-import { AppIcon } from "@/components/ui/icon";
-import { Input } from "@/components/ui/input";
+} from "@/components/ui/components/overlays/dialog";
+import { Field } from "@/components/ui/components/forms/field";
+import { AppIcon } from "@/icons";
+import { Input } from "@/components/ui/components/forms/input";
 
 const MAX_NAME = 80;
 

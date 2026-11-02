@@ -1,9 +1,9 @@
-import { ArrowRight2 } from "iconsax-react";
+import { ArrowRight2 } from "@/icons";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
-import { AppIcon } from "@/components/ui/icon";
-import { cn } from "@/lib/utils";
+import { AppIcon } from "@/icons";
+import { cn } from "@/lib/utils/utils";
 
 export interface Crumb {
   label: string;
@@ -24,7 +24,8 @@ export function Breadcrumbs({ items, className }: { items: Crumb[]; className?: 
             <li
               key={`${i}-${item.label}`}
               aria-current={last ? "page" : undefined}
-              className={cn("flex items-center gap-1", last ? "min-w-0" : "shrink-0")}
+              // On narrow screens only the current page fits; ancestors reappear from sm up.
+              className={cn("items-center gap-1", last ? "flex min-w-0" : "hidden shrink-0 sm:flex")}
             >
               {item.node ? (
                 item.node

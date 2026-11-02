@@ -35,6 +35,7 @@ export interface BulletList {
   kind: 'bullets';
   id: string;
   span: Span;
+  hidden: boolean;
   open: string;
   close: string;
   bulletCommand: string;
@@ -45,6 +46,11 @@ export interface Bullet {
   span: Span;
   hidden: boolean;
   text: Text;
+  /**
+   * Children are lists nested inside this bullet. Span covers the bullet and
+   * its children; Text covers only the bullet's own words.
+   */
+  children?: BulletList[];
 }
 export interface SkillLine {
   kind: 'skill';
@@ -58,6 +64,7 @@ export interface Paragraph {
   kind: 'paragraph';
   id: string;
   span: Span;
+  hidden: boolean;
   text: Field;
 }
 export interface Opaque {
@@ -138,7 +145,7 @@ export interface CommandInfo {
   name: string;
   argCount: number /* int */;
   optionalDefault: string | null;
-  role: 'entry' | 'bullet' | 'listOpen' | 'listClose' | 'section' | 'skill' | 'link' | 'other';
+  role: 'entry' | 'bullet' | 'listOpen' | 'listClose' | 'section' | 'skill' | 'link' | 'paragraph' | 'structure' | 'contact' | 'other';
   args: CommandArg[];
 }
 export interface CommandArg {

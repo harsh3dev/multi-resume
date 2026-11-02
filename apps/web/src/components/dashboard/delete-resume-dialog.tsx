@@ -1,9 +1,9 @@
 "use client";
 
-import { Trash } from "iconsax-react";
+import { Trash } from "@/icons";
 import { useState } from "react";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/ui/components/actions/button";
 import {
   Dialog,
   DialogContent,
@@ -12,8 +12,8 @@ import {
   DialogHeader,
   DialogIcon,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { AppIcon } from "@/components/ui/icon";
+} from "@/components/ui/components/overlays/dialog";
+import { AppIcon } from "@/icons";
 import type { ResumeSummary } from "@/app/(app)/dashboard/page";
 import { apiFetch } from "@/lib/api/client";
 import { toast } from "@/lib/store/toast";

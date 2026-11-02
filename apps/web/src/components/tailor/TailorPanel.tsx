@@ -3,19 +3,19 @@
 import { useMemo, useState } from "react";
 import { experimental_useObject as useObject } from "@ai-sdk/react";
 
-import { MagicStar } from "iconsax-react";
+import { MagicStar } from "@/icons";
 
-import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Button } from "@/components/ui/button";
-import { EmptyState } from "@/components/ui/empty-state";
-import { Field } from "@/components/ui/field";
-import { AppIcon } from "@/components/ui/icon";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Textarea } from "@/components/ui/textarea";
-import { buildNodeIndex } from "@/lib/node-index";
+import { Badge } from "@/components/ui/components/display/badge";
+import { Checkbox } from "@/components/ui/components/forms/checkbox";
+import { Button } from "@/components/ui/components/actions/button";
+import { EmptyState } from "@/components/ui/components/display/empty-state";
+import { Field } from "@/components/ui/components/forms/field";
+import { AppIcon } from "@/icons";
+import { Skeleton } from "@/components/ui/components/display/skeleton";
+import { Textarea } from "@/components/ui/components/forms/textarea";
+import { buildNodeIndex } from "@/lib/utils/node-index";
 import { toast } from "@/lib/store/toast";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/utils/utils";
 import { apiFetch, apiJSON } from "@/lib/api/client";
 import { tailorChangesSchema } from "@/lib/schemas/tailor";
 import { createClient } from "@/lib/supabase/client";

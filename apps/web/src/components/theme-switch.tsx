@@ -1,12 +1,12 @@
 "use client";
 
-import { Moon, Sun1 } from "iconsax-react";
+import { Moon, Sun1 } from "@/icons";
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
 import { flushSync } from "react-dom";
 
-import { Button } from "@/components/ui/button";
-import { AppIcon } from "@/components/ui/icon";
+import { Button } from "@/components/ui/components/actions/button";
+import { AppIcon } from "@/icons";
 
 export function ThemeSwitch() {
   const { resolvedTheme, setTheme } = useTheme();

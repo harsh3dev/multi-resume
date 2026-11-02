@@ -2,24 +2,29 @@
 
 import { use, useEffect, useState } from "react";
 
-import { SectionList } from "@/components/editor/SectionList";
-import { StylePanel } from "@/components/editor/StylePanel";
-import { EditorError } from "@/components/editor/editor-error";
-import { EditorHeader } from "@/components/editor/editor-header";
-import { Workspace } from "@/components/editor/workspace";
-import { ConversionIndicator } from "@/components/preview/conversion-indicator";
+import { EditorError } from "@/components/editor/components/panels/editor-error";
+import { EditorHeader } from "@/components/editor/components/header/editor-header";
+import { ImagesPanel } from "@/components/editor/components/panels/ImagesPanel";
+import { SectionList } from "@/components/editor/components/content/SectionList";
+import { SectionToggles } from "@/components/editor/components/controls/section-toggles";
+import { StylePanel } from "@/components/editor/components/panels/StylePanel";
+import { Workspace } from "@/components/editor/components/panels/workspace";
 import { PdfPreview } from "@/components/preview/PdfPreview";
-import { SectionToggles } from "@/components/editor/section-toggles";
+import { ConversionIndicator } from "@/components/preview/conversion-indicator";
 import { SourceTab } from "@/components/source/SourceTab";
 import { TailorPanel } from "@/components/tailor/TailorPanel";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { TailorStarIcon } from "@/icons";
+import { AppIcon } from "@/icons";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/components/navigation/tabs";
 import { VersionList } from "@/components/versions/VersionList";
+import { NameVersionDialog } from "@/components/versions/name-version-dialog";
 import { apiJSON } from "@/lib/api/client";
 import { useEditor } from "@/lib/store/editor";
 import { collapsibleIds, useSectionsUi } from "@/lib/store/sections-ui";
+import { toast } from "@/lib/store/toast";
 import type { Resume } from "@/types/generated";
 
-const TABS = ["fields", "style", "source", "versions", "tailor"] as const;
+const TABS = ["fields", "style", "images", "source", "versions", "tailor"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function EditorPage({
@@ -35,6 +40,29 @@ export default function EditorPage({
   const [variationName, setVariationName] = useState("");
   const [resumeTitle, setResumeTitle] = useState("");
   const [isDefault, setIsDefault] = useState(false);
+  const [saveVersionOpen, setSaveVersionOpen] = useState(false);
+  const [versionsRevision, setVersionsRevision] = useState(0);
+
+  async function saveAsVersion(name: string) {
+    try {
+      const { pendingOps, flush } = useEditor.getState();
+      if (pendingOps.size > 0) await flush();
+      await apiJSON(`/api/resumes/${resumeId}/variations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, fromVariationId: variantId }),
+      });
+      toast.success("Version saved", `${name} is a copy of what you have now.`);
+      setVersionsRevision((revision) => revision + 1);
+    } catch (e) {
+      const taken = e instanceof Error && e.message === "name_taken";
+      toast.error(
+        "Could not save version",
+        taken ? "A version with that name already exists." : e instanceof Error ? e.message : undefined,
+      );
+      throw e;
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -55,9 +83,12 @@ export default function EditorPage({
           revision: number;
           sourceTex: string;
           pdfUrl?: string;
+          pdfStale?: boolean;
         }>(`/api/resumes/${resumeId}/variations/${variantId}`);
         if (!cancelled) {
-          loadDraft(res.draftId, res.tree, res.revision, res.sourceTex);
+          loadDraft(res.draftId, res.tree, res.revision, res.sourceTex, res.pdfStale);
+          // Land on Images when the template references pictures the user hasn't supplied.
+          setTab(res.tree.assets.some((a) => !a.uploaded) ? "images" : "fields");
           // Register before the list mounts so sections start open without a flash.
           useSectionsUi.getState().setIds(collapsibleIds(res.tree.header, res.tree.sections));
           setVariationName(res.variationName);
@@ -84,17 +115,27 @@ export default function EditorPage({
     return <div className="p-8 text-sm text-muted-foreground">Loading editor…</div>;
   }
 
+  // The Images tab only exists when the template references images.
+  const hasImages = tree.assets.length > 0;
+  const visibleTabs = TABS.filter((t) => t !== "images" || hasImages);
+  const activeTab: Tab = visibleTabs.includes(tab) ? tab : "fields";
+
   const edit = (
-    <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="h-full gap-0">
+    <Tabs value={activeTab} onValueChange={(v) => setTab(v as Tab)} className="h-full gap-0">
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-2">
         <TabsList>
-          {TABS.map((name) => (
+          {visibleTabs.map((name) => (
             <TabsTrigger key={name} value={name} className="px-3 capitalize">
-              {name}
+              {name === "fields" ? "Edit" : name === "tailor" ? (
+                <>
+                  <AppIcon icon={TailorStarIcon} variant="Bulk" />
+                  Tailor with AI
+                </>
+              ) : name}
             </TabsTrigger>
           ))}
         </TabsList>
-        {tab === "fields" ? <SectionToggles /> : null}
+        {activeTab === "fields" ? <SectionToggles /> : null}
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
         <TabsContent value="fields">
@@ -102,6 +143,9 @@ export default function EditorPage({
         </TabsContent>
         <TabsContent value="style">
           <StylePanel styles={tree.styles} />
+        </TabsContent>
+        <TabsContent value="images">
+          <ImagesPanel resumeId={resumeId} assets={tree.assets} />
         </TabsContent>
         {/* SourceTab stays mounted (hidden) so tab switches keep edits. */}
         <TabsContent value="source" keepMounted className="h-full data-hidden:hidden">
@@ -114,6 +158,8 @@ export default function EditorPage({
             resumeId={resumeId}
             variantId={variantId}
             onRenamed={(id, name) => id === variantId && setVariationName(name)}
+            onSaveAsVersion={() => setSaveVersionOpen(true)}
+            versionsRevision={versionsRevision}
           />
         </TabsContent>
         <TabsContent value="tailor">
@@ -133,8 +179,10 @@ export default function EditorPage({
         isDefault={isDefault}
         onResumeRenamed={setResumeTitle}
         onVersionRenamed={setVariationName}
+        onSaveAsVersion={() => setSaveVersionOpen(true)}
       />
       <Workspace edit={edit} preview={<PdfPreview />} divider={<ConversionIndicator />} />
+      <NameVersionDialog open={saveVersionOpen} onOpenChange={setSaveVersionOpen} onSubmit={saveAsVersion} />
     </div>
   );
 }

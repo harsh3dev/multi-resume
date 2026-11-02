@@ -1,23 +1,23 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { ArrowDown2, DocumentText, Edit2, Trash } from "iconsax-react";
+import { ArrowDown2, DocumentText, Edit2, Trash } from "@/icons";
 import Link from "next/link";
 import { useCallback, useState } from "react";
 
 import { DeleteResumeDialog } from "@/components/dashboard/delete-resume-dialog";
 import { RenameDialog } from "@/components/rename-dialog";
 import { DeleteVersionDialog } from "@/components/versions/delete-version-dialog";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { AppIcon } from "@/components/ui/icon";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Badge } from "@/components/ui/components/display/badge";
+import { Button } from "@/components/ui/components/actions/button";
+import { AppIcon } from "@/icons";
+import { Skeleton } from "@/components/ui/components/display/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/components/actions/tooltip";
 import type { ResumeSummary } from "@/app/(app)/dashboard/page";
-import { IconButton } from "@/components/ui/icon-button";
+import { IconButton } from "@/components/ui/components/actions/icon-button";
 import { apiJSON } from "@/lib/api/client";
-import { renameResume, renameVersion } from "@/lib/rename";
-import { cn } from "@/lib/utils";
+import { renameResume, renameVersion } from "@/lib/utils/rename";
+import { cn } from "@/lib/utils/utils";
 
 export type VariationSummary = {
   id: string;

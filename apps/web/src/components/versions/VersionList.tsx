@@ -1,28 +1,26 @@
 "use client";
 
-import { ArrowDown2, DocumentDownload, Edit2, Layer, Trash } from "iconsax-react";
+import { ArrowDown2, DocumentDownload, Edit2, Layer, Trash } from "@/icons";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
-import { DeleteVersionDialog } from "@/components/versions/delete-version-dialog";
 import { RenameDialog } from "@/components/rename-dialog";
-import { NameVersionDialog } from "@/components/versions/name-version-dialog";
-import { Badge } from "@/components/ui/badge";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Badge } from "@/components/ui/components/display/badge";
+import { Button, buttonVariants } from "@/components/ui/components/actions/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { EmptyState } from "@/components/ui/empty-state";
-import { AppIcon } from "@/components/ui/icon";
-import { IconButton } from "@/components/ui/icon-button";
-import { Skeleton } from "@/components/ui/skeleton";
+} from "@/components/ui/components/actions/dropdown-menu";
+import { EmptyState } from "@/components/ui/components/display/empty-state";
+import { AppIcon } from "@/icons";
+import { IconButton } from "@/components/ui/components/actions/icon-button";
+import { Skeleton } from "@/components/ui/components/display/skeleton";
+import { DeleteVersionDialog } from "@/components/versions/delete-version-dialog";
 import { apiJSON } from "@/lib/api/client";
-import { downloadDraft, type DownloadKind } from "@/lib/download";
-import { renameVersion } from "@/lib/rename";
-import { useEditor } from "@/lib/store/editor";
+import { downloadDraft, type DownloadKind } from "@/lib/utils/download";
+import { renameVersion } from "@/lib/utils/rename";
 import { toast } from "@/lib/store/toast";
 
 // A version IS a variation: a named, editable copy of the resume with its
@@ -39,15 +37,18 @@ export function VersionList({
   resumeId,
   variantId,
   onRenamed,
+  onSaveAsVersion,
+  versionsRevision,
 }: {
   resumeId: string;
   variantId: string;
   /** Called after a version is renamed, so the page can refresh the header. */
   onRenamed?: (id: string, name: string) => void;
+  onSaveAsVersion: () => void;
+  versionsRevision: number;
 }) {
   const [versions, setVersions] = useState<VersionEntry[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [nameOpen, setNameOpen] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [toDelete, setToDelete] = useState<VersionEntry | null>(null);
   const [toRename, setToRename] = useState<VersionEntry | null>(null);
@@ -65,29 +66,7 @@ export function VersionList({
 
   useEffect(() => {
     void load();
-  }, [load]);
-
-  async function saveAsVersion(name: string) {
-    try {
-      // Make sure the copy includes the latest edits.
-      const { pendingOps, flush } = useEditor.getState();
-      if (pendingOps.size > 0) await flush();
-      await apiJSON(`/api/resumes/${resumeId}/variations`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, fromVariationId: variantId }),
-      });
-      toast.success("Version saved", `${name} is a copy of what you have now.`);
-      await load();
-    } catch (e) {
-      const taken = e instanceof Error && e.message === "name_taken";
-      toast.error(
-        "Could not save version",
-        taken ? "A version with that name already exists." : e instanceof Error ? e.message : undefined,
-      );
-      throw e;
-    }
-  }
+  }, [load, versionsRevision]);
 
   async function download(v: VersionEntry, kind: DownloadKind) {
     if (!v.draftId) return;
@@ -108,7 +87,7 @@ export function VersionList({
         <p className="text-xs text-muted-foreground">
           Each version is its own editable copy of this resume.
         </p>
-        <Button size="sm" onClick={() => setNameOpen(true)}>
+        <Button size="sm" onClick={onSaveAsVersion}>
           Save as version
         </Button>
       </div>
@@ -190,7 +169,6 @@ export function VersionList({
         </ul>
       )}
 
-      <NameVersionDialog open={nameOpen} onOpenChange={setNameOpen} onSubmit={saveAsVersion} />
       {toRename ? (
         <RenameDialog
           open

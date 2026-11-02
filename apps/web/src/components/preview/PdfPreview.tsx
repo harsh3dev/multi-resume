@@ -1,15 +1,16 @@
 "use client";
 
-import { ArrowLeft2, ArrowRight2, SearchZoomIn1, SearchZoomOut1 } from "iconsax-react";
+import { ArrowLeft2, ArrowRight2, SearchZoomIn1, SearchZoomOut1 } from "@/icons";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/TextLayer.css";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 
-import { Button } from "@/components/ui/button";
-import { AppIcon } from "@/components/ui/icon";
-import { Input } from "@/components/ui/input";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { SaveButton } from "@/components/editor/components/controls/save-button";
+import { Button } from "@/components/ui/components/actions/button";
+import { AppIcon } from "@/icons";
+import { Input } from "@/components/ui/components/forms/input";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/components/actions/tooltip";
 import { useEditor } from "@/lib/store/editor";
 
 // The worker version must match react-pdf's pdfjs-dist exactly; the root
@@ -227,6 +228,7 @@ export function PdfPreview() {
         <ToolButton label="Next page" disabled={!hasPdf || page >= numPages} onClick={() => goTo(page + 1)}>
           <AppIcon icon={ArrowRight2} />
         </ToolButton>
+        <SaveButton />
         <div className="ml-auto flex items-center gap-1">
           <ToolButton
             label="Zoom out"
@@ -311,7 +313,7 @@ export function PdfPreview() {
             failed ? null : <PreviewSkeleton />
           ) : (
             <p className="p-8 text-center text-sm text-muted-foreground">
-              The PDF preview appears here after the first compile.
+              Click Sync PDF to generate the preview.
             </p>
           )
         ) : null}

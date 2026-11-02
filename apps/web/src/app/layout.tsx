@@ -3,8 +3,8 @@ import { Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
 
 import { SentryInit } from "@/components/SentryInit";
 import { ThemeProvider } from "@/components/theme-provider";
-import { Toaster } from "@/components/ui/toaster";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { Toaster } from "@/components/ui/components/display/toaster";
+import { TooltipProvider } from "@/components/ui/components/actions/tooltip";
 import "./globals.css";
 
 const geistSans = Geist({

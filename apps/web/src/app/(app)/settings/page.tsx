@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from "react";
 
-import { Setting2 } from "iconsax-react";
+import { Setting2 } from "@/icons";
 
 import { PageHeader, PageTitle } from "@/components/layout/page-header";
 import { ThemeSwitch } from "@/components/theme-switch";
-import { Separator } from "@/components/ui/separator";
+import { Separator } from "@/components/ui/components/navigation/separator";
 import { apiJSON } from "@/lib/api/client";
 
 export default function SettingsPage() {

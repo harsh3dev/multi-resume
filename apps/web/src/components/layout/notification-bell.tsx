@@ -1,11 +1,11 @@
 "use client";
 
-import { Notification } from "iconsax-react";
+import { Notification } from "@/icons";
 
-import { Button } from "@/components/ui/button";
-import { AppIcon } from "@/components/ui/icon";
-import { ToastOrigin } from "@/components/ui/toaster";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Button } from "@/components/ui/components/actions/button";
+import { AppIcon } from "@/icons";
+import { ToastOrigin } from "@/components/ui/components/display/toaster";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/components/actions/tooltip";
 import { toast } from "@/lib/store/toast";
 
 /**

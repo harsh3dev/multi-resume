@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import type { ReactNode } from "react";
 
-import { useMotion } from "@/lib/motion";
+import { useMotion } from "@/lib/components/motion";
 
 // A template re-mounts on every navigation, giving each page a short fade +
 // 10px rise. Reduced motion: opacity only.

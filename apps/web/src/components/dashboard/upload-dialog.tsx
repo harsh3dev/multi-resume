@@ -1,9 +1,10 @@
 "use client";
 
-import { CloseCircle, DocumentUpload } from "iconsax-react";
+import { CloseCircle, DocumentUpload } from "@/icons";
+import { useRouter } from "next/navigation";
 import { useRef, useState, type DragEvent } from "react";
 
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/ui/components/actions/button";
 import {
   Dialog,
   DialogContent,
@@ -12,21 +13,21 @@ import {
   DialogHeader,
   DialogIcon,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { AppIcon } from "@/components/ui/icon";
-import { IconButton } from "@/components/ui/icon-button";
+} from "@/components/ui/components/overlays/dialog";
+import { AppIcon } from "@/icons";
+import { IconButton } from "@/components/ui/components/actions/icon-button";
 import { apiFetch } from "@/lib/api/client";
 import { toast } from "@/lib/store/toast";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/utils/utils";
 
 // Matches the backend limit (maxTexSize), so an oversized file is rejected
 // here instead of after the upload.
-const MAX_BYTES = 512 * 1024;
+const MAX_BYTES = 2 * 1024 * 1024;
 
 function validate(file: File): string | null {
   if (!file.name.toLowerCase().endsWith(".tex")) return "Only .tex files are supported.";
   if (file.size === 0) return "That file is empty.";
-  if (file.size > MAX_BYTES) return "That file is larger than 512 KB.";
+  if (file.size > MAX_BYTES) return "That file is larger than 2 MB.";
   return null;
 }
 
@@ -53,6 +54,7 @@ export function UploadDialog({
   onOpenChange: (open: boolean) => void;
   onUploaded: () => void;
 }) {
+  const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -145,6 +147,11 @@ export function UploadDialog({
       onOpenChange(false);
       reset();
       onUploaded();
+      // Straight into the editor on the Original version (which opens on the
+      // Images tab when the template needs pictures).
+      if (body.resumeId && body.variationId) {
+        router.push(`/resume/${body.resumeId}/${body.variationId}`);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "upload failed");
       toast.error("Upload failed", e instanceof Error ? e.message : undefined);
@@ -210,7 +217,7 @@ export function UploadDialog({
           <span className={cn("text-sm", dragging ? "font-medium text-primary" : "text-muted-foreground")}>
             {dragging ? "Drop your .tex file to add it" : "Drag a .tex file here, or click to choose one"}
           </span>
-          <span className="text-xs text-muted-foreground/80">.tex only, up to 512 KB</span>
+          <span className="text-xs text-muted-foreground/80">.tex only, up to 2 MB</span>
         </button>
 
         {file ? (

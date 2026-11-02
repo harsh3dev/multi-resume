@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { Home2, Logout, Setting2 } from "iconsax-react";
+import { Home2, Logout, Setting2 } from "@/icons";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
@@ -17,15 +17,15 @@ import {
 } from "@/components/layout/sidebar-state";
 import { NotificationBell } from "@/components/layout/notification-bell";
 import { ThemeSwitch } from "@/components/theme-switch";
-import { AppIcon, type IconsaxIcon } from "@/components/ui/icon";
-import { IconButton } from "@/components/ui/icon-button";
-import { LogoTile } from "@/components/ui/logo";
-import { Separator } from "@/components/ui/separator";
-import { UserAvatar } from "@/components/ui/user-avatar";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useMotion } from "@/lib/motion";
+import { AppIcon, type IconsaxIcon } from "@/icons";
+import { IconButton } from "@/components/ui/components/actions/icon-button";
+import { LogoTile } from "@/components/ui/components/display/logo";
+import { Separator } from "@/components/ui/components/navigation/separator";
+import { UserAvatar } from "@/components/ui/components/navigation/user-avatar";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/components/actions/tooltip";
+import { useMotion } from "@/lib/components/motion";
 import { createClient } from "@/lib/supabase/client";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/utils/utils";
 
 interface NavItem {
   href: string;
@@ -87,13 +87,28 @@ function NavLink({
 
 function AccountRow({ collapsed }: { collapsed: boolean }) {
   const router = useRouter();
-  const [email, setEmail] = useState<string | null>(null);
+  const [account, setAccount] = useState<{ name: string | null; email: string | null }>({
+    name: null,
+    email: null,
+  });
 
   useEffect(() => {
+    let active = true;
     createClient()
       .auth.getUser()
-      .then(({ data }) => setEmail(data.user?.email ?? null))
-      .catch(() => setEmail(null));
+      .then(({ data }) => {
+        if (!active) return;
+        const user = data.user;
+        const profile = user?.user_metadata;
+        const name = [profile?.full_name, profile?.name].find(
+          (value): value is string => typeof value === "string" && value.trim().length > 0,
+        );
+        setAccount({ name: name?.trim() ?? null, email: user?.email ?? null });
+      })
+      .catch(() => {
+        if (active) setAccount({ name: null, email: null });
+      });
+    return () => { active = false; };
   }, []);
 
   async function signOut() {
@@ -104,11 +119,13 @@ function AccountRow({ collapsed }: { collapsed: boolean }) {
 
   return (
     <div className={cn("flex items-center gap-2", collapsed && "flex-col")}>
-      <UserAvatar value={email ?? "user"} />
+      <UserAvatar value={account.email ?? "user"} />
       {collapsed ? null : (
         <div className="grid min-w-0 flex-1 text-left leading-tight">
-          <span className="truncate text-xs font-medium tracking-tight">{email ?? "Account"}</span>
-          <span className="text-[11px] text-sidebar-foreground/50">Signed in</span>
+          <span className="truncate text-xs font-medium tracking-tight">{account.name ?? account.email ?? "Account"}</span>
+          {account.name && account.email ? (
+            <span className="truncate text-[11px] text-sidebar-foreground/50">{account.email}</span>
+          ) : null}
         </div>
       )}
       <IconButton icon={Logout} label="Sign out" size="icon-sm" onClick={() => void signOut()} />
