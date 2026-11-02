@@ -81,8 +81,14 @@ func TestEditabilityMetric(t *testing.T) {
 				r.editOK++
 			}
 			r.hideN++
-			if res, err := ApplyOps(src, tree, []model.Op{{Kind: "hide", ID: b.bullet.ID}}); err == nil {
-				if _, err := ApplyOps(res.Source, res.Tree, []model.Op{{Kind: "show", ID: b.bullet.ID}}); err == nil {
+			// The last visible bullet cannot be hidden alone (an empty list does
+			// not compile); the whole list is hidden instead.
+			target := b.bullet.ID
+			if visibleBullets(b.list) <= 1 {
+				target = b.list.ID
+			}
+			if res, err := ApplyOps(src, tree, []model.Op{{Kind: "hide", ID: target}}); err == nil {
+				if _, err := ApplyOps(res.Source, res.Tree, []model.Op{{Kind: "show", ID: target}}); err == nil {
 					r.hideOK++
 				}
 			}
@@ -93,6 +99,9 @@ func TestEditabilityMetric(t *testing.T) {
 				}
 				if b.entry == nil {
 					break // standalone list bullets: no same-parent anchor rule, try first entry target
+				}
+				if b.entry == nil && b.list.Span[0] >= e.Span[0] && b.list.Span[1] <= e.Span[1] {
+					break // nested list inside a raw entry argument has no safe cut boundary
 				}
 				r.moveN++
 				if try(model.Op{Kind: "move", ID: b.bullet.ID, ToEntryID: e.ID}) {

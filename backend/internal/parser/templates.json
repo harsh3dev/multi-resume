@@ -1,0 +1,48 @@
+{
+  "listEnvs": ["itemize", "enumerate", "cvitems", "cvlist"],
+  "commands": {
+    "\\resumeSubheading":      {"role": "entry", "slots": ["bold", "right", "italic", "right"]},
+    "\\resumeProjectHeading":  {"role": "entry", "slots": ["left", "right"]},
+    "\\resumeSubSubheading":   {"role": "entry", "slots": ["italic", "right"]},
+    "\\resumeItem":            {"role": "bullet", "slots": ["plain"]},
+    "\\resumeSubItem":         {"role": "bullet", "slots": ["plain"]},
+    "\\resumeItemListStart":   {"role": "listOpen", "open": "\\begin{itemize}"},
+    "\\resumeItemListEnd":     {"role": "listClose"},
+    "\\resumeSubHeadingListStart": {"role": "structure"},
+    "\\resumeSubHeadingListEnd":   {"role": "listClose"},
+
+    "\\cvsection":      {"role": "section", "slots": ["plain"]},
+    "\\cvsubsection":   {"role": "entry", "slots": ["left"]},
+    "\\subsection":     {"role": "entry", "slots": ["left"]},
+    "\\subsection*":    {"role": "entry", "slots": ["left"]},
+    "\\cventry":        {"role": "entry", "slots": ["bold", "plain", "plain", "plain", "plain", "plain"]},
+    "\\cvitem":         {"role": "skill", "slots": ["bold", "plain"]},
+    "\\cvitemwithcomment": {"role": "entry", "slots": ["bold", "plain", "plain"]},
+    "\\cvdoubleitem":   {"role": "entry", "slots": ["bold", "plain", "bold", "plain"]},
+    "\\cvlistitem":     {"role": "paragraph", "slots": ["plain"]},
+    "\\cvlistdoubleitem": {"role": "entry", "slots": ["plain", "plain"]},
+    "\\cvhonor":        {"role": "entry", "slots": ["bold", "plain", "plain", "right"]},
+    "\\cvskill":        {"role": "skill", "slots": ["bold", "plain"]},
+    "\\cvskilltext":    {"role": "skill", "slots": ["bold", "plain"]},
+    "\\cvevent":        {"role": "entry", "slots": ["bold", "italic", "right", "right"]},
+    "\\cvachievement":  {"role": "entry", "slots": ["plain", "bold", "plain"]},
+    "\\cvtext":         {"role": "paragraph", "slots": ["plain"]},
+    "\\metasection":    {"role": "skill", "slots": ["bold", "plain"]},
+
+    "\\descript":       {"role": "paragraph", "slots": ["plain"]},
+    "\\location":       {"role": "paragraph", "slots": ["plain"]},
+
+    "\\email":          {"role": "contact", "slots": ["plain"]},
+    "\\phone":          {"role": "contact", "slots": ["plain"]},
+    "\\mobile":         {"role": "contact", "slots": ["plain"]},
+    "\\mailaddress":    {"role": "contact", "slots": ["plain"]},
+    "\\address":        {"role": "contact", "slots": ["plain"]},
+    "\\homepage":       {"role": "contact", "slots": ["plain"]},
+    "\\github":         {"role": "contact", "slots": ["plain"]},
+    "\\linkedin":       {"role": "contact", "slots": ["plain"]},
+    "\\twitter":        {"role": "contact", "slots": ["plain"]},
+    "\\xtwitter":       {"role": "contact", "slots": ["plain"]},
+    "\\orcid":          {"role": "contact", "slots": ["plain"]},
+    "\\social":         {"role": "contact", "slots": ["plain"]}
+  }
+}

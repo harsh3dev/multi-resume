@@ -8,22 +8,49 @@ import (
 	"github.com/harsh3dev/multi-resume/backend/internal/model"
 )
 
+// learnRoles classifies every custom command by the features of its fully
+// expanded body (calls of other custom commands are substituted, several
+// levels deep). A local definition always wins; the template dictionary
+// only fills in commands the document does not define (their definitions
+// live in a .cls file) or defines in a way the parser cannot read.
 func learnRoles(defs []definition) {
-	bodies := make(map[string]string, len(defs))
-	for _, def := range defs {
-		bodies[def.Name] = def.Body
-	}
+	byName := make(map[string]*definition, len(defs))
 	for i := range defs {
-		body := defs[i].Body
-		// Follow one command call into its definition, without recursive expansion.
-		for name, inner := range bodies {
-			if name != defs[i].Name && strings.Contains(body, name+"{") && len(body)+len(inner) < 64*1024 {
-				body += " " + inner
+		byName[defs[i].Name] = &defs[i]
+	}
+	opt := latexOptions(defs)
+	for i := range defs {
+		d := &defs[i]
+		body := expandBody(d.Body, byName, opt, maxExpandDepth)
+		d.Role, d.Args = learnRole(d.Name, d.ArgCount, body)
+		if d.Role == "other" {
+			if t, ok := dictionary.Commands[d.Name]; ok && len(t.Slots) == d.ArgCount {
+				d.Role, d.Args = t.Role, t.args()
 			}
 		}
-		defs[i].Role, defs[i].Args = learnRole(defs[i].Name, defs[i].ArgCount, body)
 	}
 }
+
+var beginEnvPattern = regexp.MustCompile(`\\(begin|end)\{([A-Za-z*]+)\}`)
+
+// listBalance counts list-environment openings and closings in a body.
+func listBalance(body string) (opens, closes int) {
+	for _, m := range beginEnvPattern.FindAllStringSubmatch(body, -1) {
+		if !isListEnv(m[2]) {
+			continue
+		}
+		if m[1] == "begin" {
+			opens++
+		} else {
+			closes++
+		}
+	}
+	return
+}
+
+// unlabeledList reports a list whose items draw no bullet (label={}): in
+// resume templates this is a layout container for entries, not a bullet list.
+var unlabeledList = regexp.MustCompile(`label\s*=\s*(\{\s*\}|\\null|,|\])`)
 
 func learnRole(name string, count int, body string) (string, []model.CommandArg) {
 	if count < 0 || count > 9 {
@@ -58,12 +85,18 @@ func learnRole(name string, count int, body string) (string, []model.CommandArg)
 	}
 	role := "other"
 	nameLower := strings.ToLower(name)
+	opens, closes := listBalance(body)
 	switch {
+	case hasLogic(body):
+		role = "other" // conditionals are never evaluated or guessed
 	case strings.Contains(body, `\section`):
 		role = "section"
-	case strings.Contains(body, `\begin{itemize}`) && !strings.Contains(body, `\end{itemize}`):
+	case opens > closes:
 		role = "listOpen"
-	case strings.Contains(body, `\end{itemize}`) && !strings.Contains(body, `\begin{itemize}`):
+		if unlabeledList.MatchString(body) {
+			role = "structure"
+		}
+	case closes > opens:
 		role = "listClose"
 	case strings.Contains(body, `\item`) && count == 1 && args[0].Use == "text":
 		role = "bullet"

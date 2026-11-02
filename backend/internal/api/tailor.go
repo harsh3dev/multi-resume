@@ -56,7 +56,10 @@ func (rl *rateLimiter) allow(user uuid.UUID) bool {
 var (
 	tailorLimit = newRateLimiter(10, time.Hour)
 	opsLimit    = newRateLimiter(30, time.Minute)
-	uploadLimit = newRateLimiter(20, 24*time.Hour)
+	uploadLimit = newRateLimiter(10, time.Hour)
+	// Compiles are the expensive operation: a short burst limit plus a daily cap.
+	compileLimit      = newRateLimiter(6, time.Minute)
+	compileDailyLimit = newRateLimiter(200, 24*time.Hour)
 )
 
 // tailorDraft handles POST /api/drafts/:id/tailor: streams validated AI

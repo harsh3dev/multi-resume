@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/harsh3dev/multi-resume/backend/internal/latex"
+	"github.com/harsh3dev/multi-resume/backend/internal/compile"
 	"github.com/harsh3dev/multi-resume/backend/internal/model"
 	"github.com/harsh3dev/multi-resume/backend/internal/textconv"
 )
@@ -21,7 +22,7 @@ const parserVersion = "1"
 type ParseOptions struct{}
 
 func Parse(src string, _ ParseOptions) (*model.Resume, error) {
-	if len(src) > 512*1024 {
+	if len(src) > compile.MaxTexBytes {
 		return nil, errors.New("source exceeds maximum size")
 	}
 	if len(src) == 0 {
@@ -30,6 +31,10 @@ func Parse(src string, _ ParseOptions) (*model.Resume, error) {
 	if !utf8.ValidString(src) {
 		return nil, errors.New("source must be UTF-8")
 	}
+	// The hash identifies the exact bytes; everything else reads the shadow
+	// source, in which hidden blocks are uncommented (same offsets).
+	sum := sha256.Sum256([]byte(src))
+	src, hs := prepareHide(src)
 	pre, body, err := splitPreambleBody(src)
 	if err != nil {
 		return nil, err
@@ -37,7 +42,6 @@ func Parse(src string, _ ParseOptions) (*model.Resume, error) {
 	if !strings.Contains(src[:pre[1]], `\documentclass`) {
 		return nil, errors.New("missing document class")
 	}
-	sum := sha256.Sum256([]byte(src))
 	defs := readDefinitions(latex.Tokenize(src[:pre[1]]), src[:pre[1]])
 	learnRoles(defs)
 	commands := make([]model.CommandInfo, 0, len(defs))
@@ -79,10 +83,10 @@ func Parse(src string, _ ParseOptions) (*model.Resume, error) {
 	macros := resolveMacros(defs)
 	family := detectFamily(class, defs)
 	resume.Meta.Family = family
-	if err := parseBody(src, body, defs, macros, resume); err != nil {
+	if err := parseBody(src, body, defs, macros, resume, hs); err != nil {
 		return nil, err
 	}
-	buildReport(src, body, resume)
+	buildReport(src, body, resume, hs)
 	return resume, nil
 }
 
@@ -147,14 +151,35 @@ func (m macroTexts) field(src string, span model.Span, slot model.Slot) model.Fi
 	return model.Field{ID: newID("f"), Value: text.Value, Mode: text.Mode, Span: span, Slot: slot, URL: text.URL}
 }
 
+// layoutArgCommands take a length or name as their argument, never content.
+var layoutArgCommands = map[string]bool{
+	`\vspace`: true, `\vspace*`: true, `\hspace`: true, `\hspace*`: true,
+	`\setlength`: true, `\addtolength`: true, `\vskip`: true, `\hskip`: true,
+}
+
 // buildReport counts only source-backed spans. Unknown visible content stays
 // read-only, rather than being silently counted as editable coverage.
-func buildReport(src string, body model.Span, resume *model.Resume) {
+func buildReport(src string, body model.Span, resume *model.Resume, hs *hideState) {
+	if hs != nil {
+		src = hs.Mask // hidden text is not visible content
+	}
 	resume.Report.Sections = len(resume.Sections)
 	spans := make([]model.Span, 0)
 	addField := func(f model.Field) {
 		if f.Mode == "text" && f.Span[1] > f.Span[0] {
 			spans = append(spans, f.Span)
+		}
+	}
+	var addList func(*model.BulletList)
+	addList = func(list *model.BulletList) {
+		for i := range list.Bullets {
+			b := &list.Bullets[i]
+			if !b.Hidden && b.Text.Mode == "text" {
+				spans = append(spans, b.Text.Span)
+			}
+			for j := range b.Children {
+				addList(&b.Children[j])
+			}
 		}
 	}
 	if resume.Header != nil {
@@ -173,19 +198,11 @@ func buildReport(src string, body model.Span, resume *model.Resume) {
 					addField(f)
 				}
 				if item.Entry.Bullets != nil {
-					for _, b := range item.Entry.Bullets.Bullets {
-						if !b.Hidden && b.Text.Mode == "text" {
-							spans = append(spans, b.Text.Span)
-						}
-					}
+					addList(item.Entry.Bullets)
 				}
 			}
 			if item.Bullets != nil {
-				for _, b := range item.Bullets.Bullets {
-					if !b.Hidden && b.Text.Mode == "text" {
-						spans = append(spans, b.Text.Span)
-					}
-				}
+				addList(item.Bullets)
 			}
 			if item.Skill != nil {
 				addField(item.Skill.Label)
@@ -196,40 +213,49 @@ func buildReport(src string, body model.Span, resume *model.Resume) {
 			}
 		}
 	}
-	// Count characters in the body, excluding comments and LaTeX commands.
-	// This is a conservative estimate: unknown visible text reduces coverage.
+	// Visible characters are the letters and digits of plain text in the body:
+	// comments, command names and environment names do not count. A character
+	// is covered when an editable span contains its byte position, so a
+	// span that merely wraps markup gains nothing.
+	sort.Slice(spans, func(i, j int) bool { return spans[i][0] < spans[j][0] })
+	inSpan := func(pos int) bool {
+		i := sort.Search(len(spans), func(i int) bool { return spans[i][0] > pos })
+		for j := i - 1; j >= 0 && j >= i-8; j-- {
+			if pos >= spans[j][0] && pos < spans[j][1] {
+				return true
+			}
+		}
+		return false
+	}
 	tokens := latex.Tokenize(src[body[0]:body[1]])
-	visible := 0
-	for _, token := range tokens {
-		if token.Kind != latex.TokText {
+	visible, covered := 0, 0
+	depth := 0 // inside [..] option groups
+	for i, token := range tokens {
+		switch token.Kind {
+		case latex.TokOpenBracket:
+			depth++
+		case latex.TokCloseBracket:
+			if depth > 0 {
+				depth--
+			}
+		}
+		if token.Kind != latex.TokText || depth > 0 {
 			continue
 		}
-		for _, r := range token.Raw {
+		if i >= 2 && tokens[i-1].Kind == latex.TokOpenBrace {
+			prev := tokens[i-2]
+			if prev.Kind == latex.TokEnv || layoutArgCommands[prev.Raw] {
+				continue // \begin{name}, \end{name}, \vspace{1pt}: layout, not content
+			}
+		}
+		for off, r := range token.Raw {
 			if unicode.IsLetter(r) || unicode.IsNumber(r) {
 				visible++
+				if inSpan(body[0] + token.Start + off) {
+					covered++
+				}
 			}
 		}
-	}
-	covered := 0
-	sort.Slice(spans, func(i, j int) bool { return spans[i][0] < spans[j][0] })
-	lastEnd := body[0]
-	for _, span := range spans {
-		if span[0] < body[0] || span[1] > body[1] {
-			continue
-		}
-		start := span[0]
-		if start < lastEnd {
-			start = lastEnd
-		}
-		if start >= span[1] {
-			continue
-		}
-		for _, r := range src[start:span[1]] {
-			if unicode.IsLetter(r) || unicode.IsNumber(r) {
-				covered++
-			}
-		}
-		lastEnd = span[1]
 	}
 	if visible > 0 {
 		resume.Report.Coverage = math.Min(1, float64(covered)/float64(visible))

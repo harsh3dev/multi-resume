@@ -1,4 +1,8 @@
-# Local backend stack: Go backend (with TeX Live + sandbox in its image).
+# Local backend stack: Go backend (with TeX Live + sandbox in its image), compiling
+# in-process under bubblewrap. `--profile split` additionally starts the
+# standalone compiler service (production topology) on 127.0.0.1:8081; point a
+# server at it with COMPILER_URL=http://127.0.0.1:8081 COMPILER_AUTH=bearer
+# COMPILER_TOKEN=dev-compiler-token.
 # The Next.js frontend runs on the host (`npm run dev` in apps/web) and talks
 # to the backend at http://127.0.0.1:8080. Supabase (auth + Postgres) and R2
 # are external services — fill backend/.env from the *.env.example template.
@@ -30,3 +34,30 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+  # Production-shaped compiler service, for testing the split locally. Mirrors
+  # the Cloud Run hardening: read-only root, no capabilities, no new privileges,
+  # one job at a time, memory-capped. (Egress is not blocked here; in
+  # production it is, via the VPC — see docs/compiler-service.md.)
+  compiler:
+    profiles: ["split"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.compiler
+    ports:
+      - "127.0.0.1:8081:8080"
+    environment:
+      PORT: "8080"
+      COMPILER_TOKEN: "${COMPILER_TOKEN:-dev-compiler-token}"
+      MAX_PARALLEL_COMPILES: "1"
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    restart: unless-stopped

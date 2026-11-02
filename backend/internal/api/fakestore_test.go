@@ -110,7 +110,7 @@ func (f *fakeStore) RenameVariation(_ context.Context, arg store.RenameVariation
 func (f *fakeStore) InsertDraft(_ context.Context, arg store.InsertDraftParams) (store.Draft, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	d := store.Draft{ID: uuid.New(), ResumeID: arg.ResumeID, VariationID: arg.VariationID, SourceTex: arg.SourceTex, SourceSha256: arg.SourceSha256, Tree: arg.Tree, UpdatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}}
+	d := store.Draft{ID: uuid.New(), ResumeID: arg.ResumeID, VariationID: arg.VariationID, SourceTex: arg.SourceTex, SourceSha256: arg.SourceSha256, Tree: arg.Tree, LastGoodPdfKey: arg.LastGoodPdfKey, NeedsCompile: arg.NeedsCompile, UpdatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}}
 	f.drafts[d.ID] = d
 	return d, nil
 }
@@ -267,6 +267,10 @@ func (f *fakeStore) InsertAsset(_ context.Context, arg store.InsertAssetParams) 
 	return a, nil
 }
 
+func (f *fakeStore) MergeResumeDraftsAssetMap(_ context.Context, _ store.MergeResumeDraftsAssetMapParams) error {
+	return nil
+}
+
 func resumeFixture(id uuid.UUID) store.Resume {
 	return store.Resume{ID: id, Title: "T", Compiler: "pdflatex", CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true}}
 }
@@ -288,6 +292,9 @@ func (f *fakeStore) UpdateDraftWithRevision(_ context.Context, arg store.UpdateD
 	d.SourceTex = arg.SourceTex
 	d.SourceSha256 = arg.SourceSha256
 	d.Tree = arg.Tree
+	d.LastGoodPdfKey = arg.LastGoodPdfKey
+	d.CompileError = arg.CompileError
+	d.NeedsCompile = true
 	d.Revision++
 	f.drafts[arg.ID] = d
 	return d, nil
@@ -340,4 +347,24 @@ func (f *fakeStore) GetTailorRunForUser(_ context.Context, arg store.GetTailorRu
 		return store.TailorRun{}, errNotFound
 	}
 	return *r, nil
+}
+
+func (f *fakeStore) SetDraftCompileResult(_ context.Context, arg store.SetDraftCompileResultParams) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.drafts[arg.ID]
+	if !ok || f.owner[d.ResumeID] != arg.UserID {
+		return 0, nil
+	}
+	if arg.LastGoodPdfKey.Valid {
+		d.LastGoodPdfKey = arg.LastGoodPdfKey
+	}
+	d.CompileError = arg.CompileError
+	if d.Revision == arg.Revision {
+		d.NeedsCompile = arg.NeedsCompile
+	} else {
+		d.NeedsCompile = true
+	}
+	f.drafts[arg.ID] = d
+	return 1, nil
 }

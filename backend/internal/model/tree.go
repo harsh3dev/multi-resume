@@ -73,7 +73,7 @@ type CommandInfo struct {
 	Name            string       `json:"name"`
 	ArgCount        int          `json:"argCount"`
 	OptionalDefault *string      `json:"optionalDefault" tstype:"string | null,required"`
-	Role            string       `json:"role" tstype:"'entry' | 'bullet' | 'listOpen' | 'listClose' | 'section' | 'skill' | 'link' | 'other'"`
+	Role            string       `json:"role" tstype:"'entry' | 'bullet' | 'listOpen' | 'listClose' | 'section' | 'skill' | 'link' | 'paragraph' | 'structure' | 'contact' | 'other'"`
 	Args            []CommandArg `json:"args"`
 }
 type CommandArg struct {

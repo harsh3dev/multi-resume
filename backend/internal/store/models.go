@@ -31,6 +31,7 @@ type Draft struct {
 	Revision       int32
 	UpdatedAt      pgtype.Timestamptz
 	VariationID    uuid.UUID
+	NeedsCompile   bool
 }
 
 type FailedUpload struct {

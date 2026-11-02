@@ -66,13 +66,17 @@ func walkTextRefs(tree *model.Resume, fn func(*textRef) bool) {
 }
 
 func walkItemTexts(it *model.SectionItem, fn func(*textRef)) {
-	bulletRefs := func(list *model.BulletList) {
+	var bulletRefs func(*model.BulletList)
+	bulletRefs = func(list *model.BulletList) {
 		if list == nil {
 			return
 		}
 		for i := range list.Bullets {
 			b := &list.Bullets[i]
 			fn(&textRef{id: b.ID, text: b.Text, set: func(t model.Text) { b.Text = t }})
+			for j := range b.Children {
+				bulletRefs(&b.Children[j])
+			}
 		}
 	}
 	switch {
@@ -114,17 +118,31 @@ func findBulletInList(list *model.BulletList, id string) *bulletLoc {
 }
 
 func eachList(tree *model.Resume, fn func(list *model.BulletList, entry *model.Entry, section *model.Section) bool) {
+	var visit func(*model.BulletList, *model.Entry, *model.Section) bool
+	visit = func(list *model.BulletList, entry *model.Entry, section *model.Section) bool {
+		if fn(list, entry, section) {
+			return true
+		}
+		for i := range list.Bullets {
+			for j := range list.Bullets[i].Children {
+				if visit(&list.Bullets[i].Children[j], nil, section) {
+					return true
+				}
+			}
+		}
+		return false
+	}
 	for si := range tree.Sections {
 		s := &tree.Sections[si]
 		for ii := range s.Items {
 			it := &s.Items[ii]
 			if it.Entry != nil && it.Entry.Bullets != nil {
-				if fn(it.Entry.Bullets, it.Entry, s) {
+				if visit(it.Entry.Bullets, it.Entry, s) {
 					return
 				}
 			}
 			if it.Bullets != nil {
-				if fn(it.Bullets, nil, s) {
+				if visit(it.Bullets, nil, s) {
 					return
 				}
 			}
@@ -256,4 +274,54 @@ func itemID(it model.SectionItem) string {
 		return it.Opaque.ID
 	}
 	return ""
+}
+
+func findParagraph(tree *model.Resume, id string) *model.Paragraph {
+	for i := range tree.Sections {
+		for j := range tree.Sections[i].Items {
+			if p := tree.Sections[i].Items[j].Paragraph; p != nil && p.ID == id {
+				return p
+			}
+		}
+	}
+	return nil
+}
+
+// walkHideable visits every node that can be hidden, with its span start and
+// a setter for its hidden flag.
+func walkHideable(t *model.Resume, fn func(start int, set func(bool))) {
+	var list func(*model.BulletList)
+	list = func(l *model.BulletList) {
+		fn(l.Span[0], func(h bool) { l.Hidden = h })
+		for i := range l.Bullets {
+			b := &l.Bullets[i]
+			fn(b.Span[0], func(h bool) { b.Hidden = h })
+			for j := range b.Children {
+				list(&b.Children[j])
+			}
+		}
+	}
+	for i := range t.Sections {
+		s := &t.Sections[i]
+		fn(s.Span[0], func(h bool) { s.Hidden = h })
+		for j := range s.Items {
+			it := &s.Items[j]
+			switch {
+			case it.Entry != nil:
+				e := it.Entry
+				fn(e.Span[0], func(h bool) { e.Hidden = h })
+				if e.Bullets != nil {
+					list(e.Bullets)
+				}
+			case it.Bullets != nil:
+				list(it.Bullets)
+			case it.Skill != nil:
+				sk := it.Skill
+				fn(sk.Span[0], func(h bool) { sk.Hidden = h })
+			case it.Paragraph != nil:
+				p := it.Paragraph
+				fn(p.Span[0], func(h bool) { p.Hidden = h })
+			}
+		}
+	}
 }

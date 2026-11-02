@@ -77,6 +77,7 @@ type BulletList struct {
 	Kind          string   `json:"kind" tstype:"'bullets'"`
 	ID            string   `json:"id"`
 	Span          Span     `json:"span"`
+	Hidden        bool     `json:"hidden"`
 	Open          string   `json:"open"`
 	Close         string   `json:"close"`
 	BulletCommand string   `json:"bulletCommand"`
@@ -87,6 +88,9 @@ type Bullet struct {
 	Span   Span   `json:"span"`
 	Hidden bool   `json:"hidden"`
 	Text   Text   `json:"text"`
+	// Children are lists nested inside this bullet. Span covers the bullet and
+	// its children; Text covers only the bullet's own words.
+	Children []BulletList `json:"children,omitempty"`
 }
 type SkillLine struct {
 	Kind   string `json:"kind" tstype:"'skill'"`
@@ -97,10 +101,11 @@ type SkillLine struct {
 	Value  Field  `json:"value"`
 }
 type Paragraph struct {
-	Kind string `json:"kind" tstype:"'paragraph'"`
-	ID   string `json:"id"`
-	Span Span   `json:"span"`
-	Text Field  `json:"text"`
+	Kind   string `json:"kind" tstype:"'paragraph'"`
+	ID     string `json:"id"`
+	Span   Span   `json:"span"`
+	Hidden bool   `json:"hidden"`
+	Text   Field  `json:"text"`
 }
 type Opaque struct {
 	Kind   string `json:"kind" tstype:"'opaque'"`

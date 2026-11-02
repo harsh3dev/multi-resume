@@ -284,22 +284,90 @@ func TestHideShowEntrySingleLine(t *testing.T) {
 	}
 }
 
-func TestHideEntryWithBulletsRejected(t *testing.T) {
-	// Parser limitation (tasks/FINAL-BLOCKERS.md): a multi-line commented
-	// entry is dropped on re-parse, so the double-apply check rejects it.
+// Hidden entries and sections are marker blocks: hide then show restores
+// the exact original bytes, and the tree reports the whole subtree hidden.
+func TestHideEntryWithBulletsRoundTrip(t *testing.T) {
 	src, tree := loadJake(t)
 	entry := tree.Sections[1].Items[0].Entry
-	if _, err := ApplyOps(src, tree, []model.Op{{Kind: "hide", ID: entry.ID}}); err == nil {
-		t.Fatal("expected rejection")
+	hid := applyOne(t, src, tree, model.Op{Kind: "hide", ID: entry.ID})
+	e := hid.Tree.Sections[1].Items[0].Entry
+	if e == nil || !e.Hidden || e.ID != entry.ID {
+		t.Fatalf("entry must stay addressable by the same id: %+v", e)
+	}
+	for _, b := range e.Bullets.Bullets {
+		if !b.Hidden {
+			t.Fatal("bullets inside a hidden entry are hidden")
+		}
+	}
+	if !strings.Contains(hid.Source, "%%HIDE-START "+entry.ID) {
+		t.Fatal("expected block markers")
+	}
+	shown := applyOne(t, hid.Source, hid.Tree, model.Op{Kind: "show", ID: entry.ID})
+	if shown.Source != src {
+		t.Fatal("hide+show must restore the original bytes")
 	}
 }
 
-func TestHideSectionRejected(t *testing.T) {
-	// Parser limitation (tasks/FINAL-BLOCKERS.md): commented \section lines
-	// vanish from the tree, so hiding a section is rejected.
+func TestHideSectionRoundTrip(t *testing.T) {
 	src, tree := loadJake(t)
-	if _, err := ApplyOps(src, tree, []model.Op{{Kind: "hide", ID: tree.Sections[0].ID}}); err == nil {
-		t.Fatal("expected rejection")
+	id := tree.Sections[0].ID
+	hid := applyOne(t, src, tree, model.Op{Kind: "hide", ID: id})
+	if !hid.Tree.Sections[0].Hidden || hid.Tree.Sections[0].ID != id {
+		t.Fatalf("hidden section: %+v", hid.Tree.Sections[0].Hidden)
+	}
+	shown := applyOne(t, hid.Source, hid.Tree, model.Op{Kind: "show", ID: id})
+	if shown.Source != src {
+		t.Fatal("hide+show must restore the original bytes")
+	}
+}
+
+func TestCannotHideOrDeleteLastBulletInList(t *testing.T) {
+	src, tree := loadJake(t)
+	var list *model.BulletList
+	eachList(tree, func(l *model.BulletList, _ *model.Entry, _ *model.Section) bool {
+		if len(l.Bullets) >= 2 {
+			list = l
+			return true
+		}
+		return false
+	})
+	cur, curTree := src, tree
+	// Remove all but the last bullet: that last one is protected.
+	for i := 0; i < len(list.Bullets)-1; i++ {
+		res := applyOne(t, cur, curTree, model.Op{Kind: "delete", ID: list.Bullets[i].ID})
+		cur, curTree = res.Source, res.Tree
+	}
+	last := list.Bullets[len(list.Bullets)-1].ID
+	for _, kind := range []string{"delete", "hide"} {
+		_, err := ApplyOps(cur, curTree, []model.Op{{Kind: kind, ID: last}})
+		if err == nil || !strings.Contains(err.Error(), "whole list") {
+			t.Fatalf("%s of the last bullet: %v", kind, err)
+		}
+	}
+	// The whole list can be hidden instead, and shown again.
+	hid := applyOne(t, cur, curTree, model.Op{Kind: "hide", ID: list.ID})
+	shown := applyOne(t, hid.Source, hid.Tree, model.Op{Kind: "show", ID: list.ID})
+	if shown.Source != cur {
+		t.Fatal("list hide+show must restore the bytes")
+	}
+}
+
+func TestShowKeepsNestedHiddenBlock(t *testing.T) {
+	src, tree := loadJake(t)
+	entry := tree.Sections[1].Items[0].Entry
+	b := entry.Bullets.Bullets[0].ID
+	step1 := applyOne(t, src, tree, model.Op{Kind: "hide", ID: b})
+	step2 := applyOne(t, step1.Source, step1.Tree, model.Op{Kind: "hide", ID: entry.ID})
+	step3 := applyOne(t, step2.Source, step2.Tree, model.Op{Kind: "show", ID: entry.ID})
+	if step3.Source != step1.Source {
+		t.Fatal("showing the outer block must leave the inner hidden bullet exactly as it was")
+	}
+	if !step3.Tree.Sections[1].Items[0].Entry.Bullets.Bullets[0].Hidden {
+		t.Fatal("inner bullet must stay hidden")
+	}
+	step4 := applyOne(t, step3.Source, step3.Tree, model.Op{Kind: "show", ID: b})
+	if step4.Source != src {
+		t.Fatal("full unwind must restore the original")
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/harsh3dev/multi-resume/backend/internal/checks"
+	"github.com/harsh3dev/multi-resume/backend/internal/compile"
 	"github.com/harsh3dev/multi-resume/backend/internal/parser"
 )
 
@@ -15,7 +16,7 @@ func main() {
 		os.Exit(2)
 	}
 	stat, err := os.Stat(os.Args[1])
-	if err != nil || stat.Size() > 512*1024 {
+	if err != nil || stat.Size() > compile.MaxTexBytes {
 		fmt.Fprintln(os.Stderr, "cannot read source")
 		os.Exit(1)
 	}

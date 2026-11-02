@@ -28,6 +28,27 @@ func TestRateLimiterWindow(t *testing.T) {
 	}
 }
 
+func TestUploadLimitTenPerHour(t *testing.T) {
+	if uploadLimit.max != 10 || uploadLimit.period != time.Hour {
+		t.Fatalf("upload limit = %d per %s; want 10 per hour", uploadLimit.max, uploadLimit.period)
+	}
+	now := time.Now()
+	rl := newRateLimiter(10, time.Hour)
+	rl.now = func() time.Time { return now }
+	for i := 0; i < 10; i++ {
+		if !rl.allow(testUserA) {
+			t.Fatalf("upload %d rejected", i+1)
+		}
+	}
+	if rl.allow(testUserA) {
+		t.Fatal("11th upload allowed within the hour")
+	}
+	now = now.Add(time.Hour)
+	if !rl.allow(testUserA) {
+		t.Fatal("upload blocked after the hour expired")
+	}
+}
+
 func TestOpsRateLimit429(t *testing.T) {
 	fs := newFakeStore()
 	h := testServer(fs)

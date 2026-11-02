@@ -1,0 +1,54 @@
+# syntax=docker/dockerfile:1
+#
+# Compiler service (production): TeX Live + the compile HTTP service. Holds no
+# secrets, so give it none: deploy with a service account that has no roles, no
+# egress, concurrency 1 (see docs/compiler-service.md).
+#
+# There is no bubblewrap here — Cloud Run cannot create user namespaces — so the
+# container is the isolation boundary and the DirectRunner enforces rlimits,
+# timeouts and TeX's own file-access policy. The same policy is also baked into
+# texmf.cnf below, so it holds even if a flag or env var were ever dropped.
+#
+# Build:  docker build -f Dockerfile.compiler -t multi-resume-compiler ./backend
+
+FROM golang:1.26-bookworm AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/compiler ./cmd/compiler
+
+FROM debian:bookworm-slim AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      texlive-latex-base \
+      texlive-latex-recommended \
+      texlive-latex-extra \
+      texlive-plain-generic \
+      texlive-xetex \
+      texlive-fonts-recommended \
+      texlive-fonts-extra \
+      latexmk \
+      # pdfinfo, for the page count.
+      poppler-utils \
+      # prlimit, for the per-job resource limits.
+      util-linux \
+      ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# TeX policy in the system config: no shell escape, and "paranoid" file access
+# (no absolute paths or parent directories for reading or writing).
+RUN printf 'shell_escape = f\nopenin_any = p\nopenout_any = p\n' > /etc/texmf/texmf.d/99-hardening.cnf \
+    && update-texmf \
+    && test "$(kpsewhich -var-value=shell_escape)" = "f" \
+    && test "$(kpsewhich -var-value=openout_any)" = "p"
+
+# Unprivileged user. The server binary and the whole TeX tree stay root-owned and
+# read-only to it, so a compromised job cannot alter the tools later jobs use.
+RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin app
+COPY --from=build /out/compiler /usr/local/bin/compiler
+USER app
+WORKDIR /home/app
+
+ENV PORT=8080
+EXPOSE 8080
+CMD ["/usr/local/bin/compiler"]

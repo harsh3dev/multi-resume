@@ -149,7 +149,8 @@ func findAssets(src string) []model.AssetRef {
 	assets := []model.AssetRef{}
 	tokens := latex.Tokenize(src)
 	for i, t := range tokens {
-		if t.Kind != latex.TokCommand || t.Raw != `\includegraphics` {
+		// \photo is moderncv's picture command: \photo[height][frame]{file}.
+		if t.Kind != latex.TokCommand || (t.Raw != `\includegraphics` && t.Raw != `\photo`) {
 			continue
 		}
 		j := i + 1

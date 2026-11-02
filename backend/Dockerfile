@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1
 #
-# Resume Editor backend: Go server + sandboxed LaTeX compile toolchain.
+# Resume Editor backend, ALL-IN-ONE image for local development: the Go server
+# plus the TeX toolchain, compiling in-process under bubblewrap (COMPILER_URL
+# unset). Production uses the split images instead: Dockerfile.server (light API)
+# and Dockerfile.compiler (compile service).
 #
 # Build:  docker build -t multi-resume-backend ./backend
 # Run:    docker run --rm -p 8080:8080 --env-file .env multi-resume-backend

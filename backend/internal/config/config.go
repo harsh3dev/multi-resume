@@ -24,6 +24,14 @@ type Config struct {
 	LLMBaseURL          string
 	LLMModel            string
 	MaxParallelCompiles int
+	// CompilerURL, when set, sends compiles to the standalone compiler service
+	// instead of running them in this process (production). Unset = in-process
+	// bubblewrap compiles (local dev).
+	CompilerURL string
+	// CompilerAuth is "iam" (Google ID token, Cloud Run) or "bearer"
+	// (CompilerToken shared secret).
+	CompilerAuth  string
+	CompilerToken string
 	Port                string
 }
 
@@ -47,6 +55,9 @@ func Load() Config {
 		LLMBaseURL:       os.Getenv("LLM_BASE_URL"),
 		LLMModel:         os.Getenv("LLM_MODEL"),
 		Port:              os.Getenv("PORT"),
+		CompilerURL:       os.Getenv("COMPILER_URL"),
+		CompilerAuth:      os.Getenv("COMPILER_AUTH"),
+		CompilerToken:     os.Getenv("COMPILER_TOKEN"),
 	}
 	if cfg.Port == "" {
 		cfg.Port = "8080"

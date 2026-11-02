@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1
+#
+# Main API service (production): a static Go binary and nothing else. It has no
+# TeX toolchain: compiles go to the separate compiler service (Dockerfile.compiler)
+# via COMPILER_URL. For the all-in-one local image (in-process bubblewrap
+# compiles) use the plain Dockerfile.
+#
+# Build:  docker build -f Dockerfile.server -t multi-resume-server ./backend
+
+FROM golang:1.26-bookworm AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
+
+# distroless/static: CA certificates and a nonroot user, no shell or package manager.
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /out/server /server
+ENV PORT=8080
+EXPOSE 8080
+USER nonroot:nonroot
+ENTRYPOINT ["/server"]

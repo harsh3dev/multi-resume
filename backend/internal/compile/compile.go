@@ -1,4 +1,10 @@
-// Package compile renders untrusted LaTeX to PDF inside a bubblewrap sandbox.
+// Package compile renders untrusted LaTeX to PDF.
+//
+// Layers: Compiler (this file) adds caching, asset fetching and PDF storage on
+// top of a Renderer. The Renderer is either LocalRenderer (latexmk in this
+// process: bubblewrap for local dev, DirectRunner in the compiler service) or
+// RemoteRenderer (HTTP to the compiler service, so the main service carries no
+// TeX toolchain).
 //
 // Security model (BUILD-PLAN §7.6/§11, tech-stack §6):
 //   - compiler name allowlisted before it becomes a CLI flag
@@ -15,17 +21,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
-
-	"golang.org/x/sync/semaphore"
 )
 
 const (
 	// MaxTexBytes bounds one uploaded .tex source.
-	MaxTexBytes = 512 << 10
+	MaxTexBytes = 2 << 20
 	// MaxAssets bounds how many asset files one compile may reference.
 	MaxAssets = 64
 	// MaxAssetBytes bounds one asset file.
@@ -49,16 +51,14 @@ type CompileError struct {
 
 func (e *CompileError) Error() string { return e.Message }
 
-// Compiler compiles .tex sources with caching, concurrency limits, and
-// per-draft cancellation.
+// Compiler compiles .tex sources with caching and per-draft cancellation.
+// It fetches asset bytes and stores PDFs; the actual rendering is delegated to
+// a Renderer.
 type Compiler struct {
-	sem     *semaphore.Weighted
-	cache   PDFCache
-	store   ObjectStore
-	runner  Runner
-	pdf     PDFTools
-	timeout time.Duration
-	mem     int64
+	cache    PDFCache
+	store    ObjectStore
+	renderer Renderer
+	pdf      PDFTools
 
 	mu      sync.Mutex
 	seq     uint64
@@ -70,11 +70,14 @@ type cancelSlot struct {
 	cancel context.CancelFunc
 }
 
-// Options configures a Compiler. Cache, Store, and Runner are required.
-// PDFTools defaults to PopplerTools.
+// Options configures a Compiler. Cache and Store are required, plus either a
+// Renderer or a Runner (from which a LocalRenderer is built). PDFTools
+// defaults to PopplerTools.
 type Options struct {
-	Cache          PDFCache
-	Store          ObjectStore
+	Cache    PDFCache
+	Store    ObjectStore
+	Renderer Renderer
+	// Runner builds a LocalRenderer when Renderer is nil.
 	Runner         Runner
 	PDFTools       PDFTools
 	MaxParallel    int
@@ -83,30 +86,29 @@ type Options struct {
 }
 
 func New(opts Options) (*Compiler, error) {
-	if opts.Cache == nil || opts.Store == nil || opts.Runner == nil {
-		return nil, errors.New("compile: Cache, Store, and Runner are required")
-	}
-	if opts.MaxParallel <= 0 {
-		opts.MaxParallel = 4 // MAX_PARALLEL_COMPILES default
-	}
-	if opts.Timeout <= 0 {
-		opts.Timeout = DefaultTimeout
-	}
-	if opts.MaxMemoryBytes <= 0 {
-		opts.MaxMemoryBytes = DefaultMaxMemoryBytes
+	if opts.Cache == nil || opts.Store == nil || (opts.Renderer == nil && opts.Runner == nil) {
+		return nil, errors.New("compile: Cache, Store, and a Renderer or Runner are required")
 	}
 	if opts.PDFTools == nil {
 		opts.PDFTools = PopplerTools{}
 	}
+	renderer := opts.Renderer
+	if renderer == nil {
+		local, err := NewLocalRenderer(LocalOptions{
+			Runner: opts.Runner, PDFTools: opts.PDFTools, MaxParallel: opts.MaxParallel,
+			Timeout: opts.Timeout, MaxMemoryBytes: opts.MaxMemoryBytes,
+		})
+		if err != nil {
+			return nil, err
+		}
+		renderer = local
+	}
 	return &Compiler{
-		sem:     semaphore.NewWeighted(int64(opts.MaxParallel)),
-		cache:   opts.Cache,
-		store:   opts.Store,
-		runner:  opts.Runner,
-		pdf:     opts.PDFTools,
-		timeout: opts.Timeout,
-		mem:     opts.MaxMemoryBytes,
-		cancels: make(map[string]cancelSlot),
+		cache:    opts.Cache,
+		store:    opts.Store,
+		renderer: renderer,
+		pdf:      opts.PDFTools,
+		cancels:  make(map[string]cancelSlot),
 	}, nil
 }
 
@@ -130,22 +132,28 @@ func (c *Compiler) Compile(ctx context.Context, tex string, assets map[string]st
 		return nil, fmt.Errorf("compile: too many assets")
 	}
 
-	fetched := make([]assetFile, 0, len(assets))
+	fetched := make(map[string][]byte, len(assets))
 	hashes := make(map[string]string, len(assets))
 	for texPath, objKey := range assets {
 		if err := ValidateAssetPath(texPath); err != nil {
 			return nil, fmt.Errorf("compile: %w", err)
 		}
-		data, err := c.store.Get(ctx, objKey)
-		if err != nil {
-			return nil, fmt.Errorf("compile: fetch asset: %w", err)
+		var data []byte
+		if objKey == PlaceholderKey {
+			data = PlaceholderImage(texPath)
+		} else {
+			var err error
+			data, err = c.store.Get(ctx, objKey)
+			if err != nil {
+				return nil, fmt.Errorf("compile: fetch asset: %w", err)
+			}
 		}
 		if len(data) > MaxAssetBytes {
 			return nil, fmt.Errorf("compile: asset too large")
 		}
 		sum := sha256.Sum256(data)
 		hashes[texPath] = hex.EncodeToString(sum[:])
-		fetched = append(fetched, assetFile{path: texPath, data: data})
+		fetched[texPath] = data
 	}
 
 	key := CacheKey(tex, hashes, compiler)
@@ -153,56 +161,18 @@ func (c *Compiler) Compile(ctx context.Context, tex string, assets map[string]st
 		return &Result{PDFKey: entry.PDFKey, PageCount: entry.PageCount, Cached: true}, nil
 	}
 
-	if err := c.sem.Acquire(ctx, 1); err != nil {
-		return nil, err
-	}
-	defer c.sem.Release(1)
-
-	dir, err := writeJobFiles(tex, fetched)
+	rendered, err := c.renderer.Render(ctx, RenderRequest{Tex: tex, Compiler: compiler, Assets: fetched})
 	if err != nil {
 		return nil, err
-	}
-	defer os.RemoveAll(dir)
-
-	runErr := c.runner.Run(ctx, Job{
-		Dir:            dir,
-		Compiler:       compiler,
-		Timeout:        c.timeout,
-		MaxMemoryBytes: c.mem,
-	})
-	pdfPath := filepath.Join(dir, "main.pdf")
-	if runErr != nil {
-		if errors.Is(runErr, ErrTimeout) {
-			return nil, &CompileError{Message: "compilation timed out"}
-		}
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		msg := "compilation failed"
-		if logBytes, err := os.ReadFile(filepath.Join(dir, "main.log")); err == nil {
-			if parsed := ParseLogError(string(logBytes), dir); parsed != "" {
-				msg = parsed
-			}
-		}
-		return nil, &CompileError{Message: msg}
-	}
-
-	pdf, err := os.ReadFile(pdfPath)
-	if err != nil {
-		return nil, &CompileError{Message: "compilation produced no PDF"}
-	}
-	pages, err := c.pdf.PageCount(pdfPath)
-	if err != nil {
-		return nil, fmt.Errorf("compile: page count: %w", err)
 	}
 	pdfKey := "pdf/" + key + ".pdf"
-	if err := c.store.Put(ctx, pdfKey, pdf); err != nil {
+	if err := c.store.Put(ctx, pdfKey, rendered.PDF); err != nil {
 		return nil, fmt.Errorf("compile: store pdf: %w", err)
 	}
 	// A failed cache upsert must not fail the compile — worst case we
 	// recompile next time.
-	_ = c.cache.Put(ctx, CacheEntry{Key: key, PDFKey: pdfKey, PageCount: pages})
-	return &Result{PDFKey: pdfKey, PageCount: pages}, nil
+	_ = c.cache.Put(ctx, CacheEntry{Key: key, PDFKey: pdfKey, PageCount: rendered.PageCount})
+	return &Result{PDFKey: pdfKey, PageCount: rendered.PageCount}, nil
 }
 
 // CompileDraft is Compile with per-draft cancellation: a new compile for the

@@ -187,10 +187,12 @@ func (d Deps) getVariationEditor(w http.ResponseWriter, r *http.Request) {
 			tree = *fresh
 		}
 	}
+	markUploaded(&tree, draft.AssetMap)
 	resp := map[string]any{
 		"draftId": draft.ID, "variationId": variation.ID, "variationName": variation.Name,
 		"resumeTitle": resume.Title, "isDefault": variation.IsDefault,
 		"tree": tree, "revision": draft.Revision, "sourceTex": draft.SourceTex,
+		"pdfStale": draft.NeedsCompile,
 	}
 	if draft.LastGoodPdfKey.Valid && d.Presign != nil {
 		if url, err := d.Presign.PresignGet(r.Context(), draft.LastGoodPdfKey.String); err == nil {

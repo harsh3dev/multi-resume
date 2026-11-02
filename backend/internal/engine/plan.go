@@ -8,6 +8,7 @@ import (
 
 	"github.com/harsh3dev/multi-resume/backend/internal/fonts"
 	"github.com/harsh3dev/multi-resume/backend/internal/model"
+	"github.com/harsh3dev/multi-resume/backend/internal/parser"
 	"github.com/harsh3dev/multi-resume/backend/internal/textconv"
 )
 
@@ -108,6 +109,22 @@ func lineBlock(src string, span model.Span) (int, int) {
 // ending exactly at a line start does not claim that line. It is an error
 // when the node shares a line with other content.
 func blockRange(src string, span model.Span) (start, end, delEnd int, err error) {
+	start, end, delEnd, err = blockRangeRaw(src, span)
+	if err != nil {
+		return
+	}
+	// A node hidden by a marker block takes its two marker lines along.
+	if ms, me, ok := markerExtent(src, span); ok && ms <= start && me >= end {
+		start, end = ms, me
+		delEnd = end
+		if delEnd < len(src) && src[delEnd] == '\n' {
+			delEnd++
+		}
+	}
+	return
+}
+
+func blockRangeRaw(src string, span model.Span) (start, end, delEnd int, err error) {
 	start = lineStartOf(src, span[0])
 	if !whitespaceOnly(src[start:span[0]]) {
 		return 0, 0, 0, errors.New("node shares its line with other content")
@@ -328,16 +345,23 @@ func planHide(src string, tree *model.Resume, op model.Op, hide bool) (planned, 
 	if hide {
 		name = "hide"
 	}
-	// Locate a hideable node: bullet, entry, skill line, or section.
+	// Locate a hideable node: bullet, entry, skill line, paragraph, list, or section.
 	var span model.Span
 	var hidden bool
 	found := true
 	if bl := findBullet(tree, op.ID); bl != nil {
 		span, hidden = bl.bullet.Span, bl.bullet.Hidden
+		if hide && visibleBullets(bl.list) <= 1 && !bl.bullet.Hidden {
+			return planned{}, errors.New("hide: this is the last visible bullet; hide the whole list instead (an empty list does not compile)")
+		}
 	} else if e, _ := findEntry(tree, op.ID); e != nil {
 		span, hidden = e.Span, e.Hidden
 	} else if sk := findSkill(tree, op.ID); sk != nil {
 		span, hidden = sk.Span, sk.Hidden
+	} else if p := findParagraph(tree, op.ID); p != nil {
+		span, hidden = p.Span, p.Hidden
+	} else if ll := findList(tree, op.ID); ll != nil {
+		span, hidden = ll.list.Span, ll.list.Hidden
 	} else if s := findSection(tree, op.ID); s != nil {
 		span, hidden = s.Span, s.Hidden
 	} else {
@@ -359,37 +383,136 @@ func planHide(src string, tree *model.Resume, op model.Op, hide bool) (planned, 
 		if err != nil {
 			return planned{}, fmt.Errorf("hide: %w", err)
 		}
+		indent := indentOfLine(src, start)
+		block := indent + parser.HideStart + op.ID + "\n" +
+			commentLines(src[start:end]) + "\n" +
+			indent + parser.HideEnd + op.ID
 		return planned{
-			patches: []Patch{{Start: start, End: end, Replacement: commentLines(src[start:end])}},
-			mirror:  setHiddenMirror(op.ID, true),
+			patches: []Patch{{Start: start, End: end, Replacement: block}},
+			mirror:  setHiddenMirror(model.Span{span[0], span[1]}, true, nil),
 		}, nil
 	}
+	if ms, me, ok := markerBlock(src, op.ID, span[0]); ok {
+		// Marker block: drop the two marker lines and one comment layer.
+		inner := ""
+		if ls := lineEndOf(src, ms) + 1; ls <= lineStartOf(src, me) && lineStartOf(src, me) > ls {
+			inner = src[ls : lineStartOf(src, me)-1]
+		}
+		// Anything still commented once one layer is gone (nested marker
+		// blocks, lines hidden by hand) stays hidden after the show.
+		stay := stillCommented(src, ms, me)
+		return planned{
+			patches: []Patch{{Start: ms, End: me, Replacement: uncommentLines(inner)}},
+			mirror:  setHiddenMirror(model.Span{ms, me}, false, stay),
+		}, nil
+	}
+	// Legacy per-line comments (no markers).
 	return planned{
 		patches: []Patch{{Start: span[0], End: span[1], Replacement: uncommentLines(src[span[0]:span[1]])}},
-		mirror:  setHiddenMirror(op.ID, false),
+		mirror:  setHiddenMirror(model.Span{span[0], span[1]}, false, stillCommented(src, span[0], span[1])),
 	}, nil
 }
 
-func setHiddenMirror(id string, hidden bool) func(*model.Resume) error {
-	return func(t *model.Resume) error {
-		if bl := findBullet(t, id); bl != nil {
-			bl.bullet.Hidden = hidden
-			return nil
+func visibleBullets(list *model.BulletList) int {
+	n := 0
+	for _, b := range list.Bullets {
+		if !b.Hidden {
+			n++
 		}
-		if e, _ := findEntry(t, id); e != nil {
-			e.Hidden = hidden
-			return nil
-		}
-		if sk := findSkill(t, id); sk != nil {
-			sk.Hidden = hidden
-			return nil
-		}
-		if s := findSection(t, id); s != nil {
-			s.Hidden = hidden
-			return nil
-		}
-		return fmt.Errorf("unknown id %q", id)
 	}
+	return n
+}
+
+// markerBlock finds the HIDE block whose START marker line directly precedes
+// the node (the line holding the node's start) and returns the byte range
+// from the start of the START line to the end of the END line (no trailing
+// newline). The block id must equal id.
+func markerBlock(src, id string, nodeStart int) (int, int, bool) {
+	ls := lineStartOf(src, nodeStart)
+	if ls == 0 {
+		return 0, 0, false
+	}
+	prev := lineStartOf(src, ls-1)
+	kind, mid, ok := parser.MarkerLine(src[prev : ls-1])
+	if !ok || kind != "START" || mid != id {
+		return 0, 0, false
+	}
+	for pos := ls; pos < len(src); {
+		end := lineEndOf(src, pos)
+		if k, i, ok := parser.MarkerLine(src[pos:end]); ok && k == "END" && i == id {
+			return prev, end, true
+		}
+		pos = end + 1
+	}
+	return 0, 0, false
+}
+
+// stillCommented lists the lines of src[from:to] that remain comments after
+// one comment layer is removed from every line.
+func stillCommented(src string, from, to int) []model.Span {
+	var out []model.Span
+	for pos := from; pos < to; {
+		end := lineEndOf(src, pos)
+		if end > to {
+			end = to
+		}
+		if rest := strings.TrimLeft(uncommentLines(src[pos:end]), " \t"); strings.HasPrefix(rest, "%") {
+			out = append(out, model.Span{pos, end})
+		}
+		pos = end + 1
+	}
+	return out
+}
+
+// setHiddenMirror applies a hide or show to every node that starts inside
+// the affected source range (pre-op coordinates), as the parser will see it
+// after the patch: the node itself, what it contains, and siblings the
+// template emits inside its block. stay lists nested marker blocks that
+// remain hidden on show.
+func setHiddenMirror(rng model.Span, hidden bool, stay []model.Span) func(*model.Resume) error {
+	keepHidden := func(start int) bool {
+		for _, r := range stay {
+			if start >= r[0] && start <= r[1] {
+				return true
+			}
+		}
+		return false
+	}
+	return func(t *model.Resume) error {
+		walkHideable(t, func(start int, set func(bool)) {
+			if start >= rng[0] && start < rng[1] {
+				set(hidden || keepHidden(start))
+			}
+		})
+		return nil
+	}
+}
+
+// markerExtent returns the range of the marker block that wraps a hidden
+// node: from the start of its HIDE-START line to the end of its HIDE-END
+// line (or the node's own end, if that is further, as for a section whose
+// span already runs past its END marker).
+func markerExtent(src string, span model.Span) (int, int, bool) {
+	ls := lineStartOf(src, span[0])
+	if ls == 0 {
+		return 0, 0, false
+	}
+	prev := lineStartOf(src, ls-1)
+	kind, id, ok := parser.MarkerLine(src[prev : ls-1])
+	if !ok || kind != "START" {
+		return 0, 0, false
+	}
+	for pos := ls; pos < len(src); {
+		end := lineEndOf(src, pos)
+		if k, i, ok := parser.MarkerLine(src[pos:end]); ok && k == "END" && i == id {
+			if span[1] > end {
+				end = span[1]
+			}
+			return prev, end, true
+		}
+		pos = end + 1
+	}
+	return 0, 0, false
 }
 
 // --- add / delete ---
@@ -398,6 +521,9 @@ func planAdd(src string, tree *model.Resume, op model.Op) (planned, error) {
 	ll := findList(tree, op.ListID)
 	if ll == nil {
 		return planned{}, fmt.Errorf("add: unknown list id %q", op.ListID)
+	}
+	if ll.list.Hidden {
+		return planned{}, errors.New("add: show the list before adding a bullet")
 	}
 	if err := textconv.Validate("text", op.Value); err != nil {
 		return planned{}, fmt.Errorf("add: %w", err)
@@ -422,6 +548,11 @@ func planAdd(src string, tree *model.Resume, op model.Op) (planned, error) {
 				break
 			}
 		}
+	}
+	// A parent bullet's source block includes its nested lists. Cloning it
+	// would duplicate those children under a supposedly new, empty bullet.
+	if template != nil && len(template.Children) > 0 {
+		template = nil
 	}
 	var newLatex, newLine string
 	if template != nil {
@@ -477,6 +608,12 @@ func planDelete(src string, tree *model.Resume, op model.Op) (planned, error) {
 	if bl == nil {
 		return planned{}, fmt.Errorf("delete: unknown bullet id %q (only bullets can be deleted)", op.ID)
 	}
+	if bl.list.Hidden {
+		return planned{}, errors.New("delete: show the list before deleting a bullet")
+	}
+	if !bl.bullet.Hidden && visibleBullets(bl.list) <= 1 {
+		return planned{}, errors.New("delete: this is the last visible bullet; delete or hide the whole list instead (an empty list does not compile)")
+	}
 	start, _, delEnd, err := blockRange(src, bl.bullet.Span)
 	if err != nil {
 		return planned{}, fmt.Errorf("delete: %w", err)
@@ -529,6 +666,9 @@ func planReorder(src string, tree *model.Resume, op model.Op) (planned, error) {
 		}
 	case findList(tree, op.ParentID) != nil:
 		ll := findList(tree, op.ParentID)
+		if ll.list.Hidden {
+			return planned{}, errors.New("reorder: show the list before reordering its bullets")
+		}
 		for i := range ll.list.Bullets {
 			children = append(children, reorderChild{id: ll.list.Bullets[i].ID, span: ll.list.Bullets[i].Span})
 		}
@@ -575,6 +715,15 @@ func planReorder(src string, tree *model.Resume, op model.Op) (planned, error) {
 	perm, err := validatePermutation(children, op.Order)
 	if err != nil {
 		return planned{}, fmt.Errorf("reorder: %w", err)
+	}
+	for i := range children {
+		// A hidden child moves together with its marker lines.
+		if ms, me, ok := markerExtent(src, children[i].span); ok {
+			for ms < me && (src[ms] == ' ' || src[ms] == '\t') {
+				ms++
+			}
+			children[i].span = model.Span{ms, me}
+		}
 	}
 	for i := 0; i+1 < len(children); i++ {
 		if children[i].span[1] > children[i+1].span[0] {
@@ -652,9 +801,15 @@ func planMove(src string, tree *model.Resume, op model.Op) (planned, error) {
 	if bl.bullet.Hidden {
 		return planned{}, errors.New("move: unhide the bullet before moving it")
 	}
+	if bl.list.Hidden {
+		return planned{}, errors.New("move: show the source list before moving a bullet")
+	}
 	entry, _ := findEntry(tree, op.ToEntryID)
 	if entry == nil {
 		return planned{}, fmt.Errorf("move: unknown target entry id %q", op.ToEntryID)
+	}
+	if entry.Bullets != nil && entry.Bullets.Hidden {
+		return planned{}, errors.New("move: show the target list before moving a bullet")
 	}
 	rawText := src[bl.bullet.Text.Span[0]:bl.bullet.Text.Span[1]]
 	cutStart, cutEnd, err := blockRangeRemoval(src, bl.bullet.Span)
@@ -714,7 +869,10 @@ func planMove(src string, tree *model.Resume, op model.Op) (planned, error) {
 			Bullets:       []model.Bullet{},
 		}
 	}
-	moved := model.Bullet{ID: op.ID, Text: bl.bullet.Text}
+	if len(bl.bullet.Children) > 0 && entry.Bullets != nil && entry.Bullets.BulletCommand != bl.list.BulletCommand {
+		return planned{}, errors.New("move: nested bullet cannot be rewrapped with a different bullet command")
+	}
+	moved := *bl.bullet
 	moved.Text.Span = model.Span{}
 	return planned{
 		patches: []Patch{

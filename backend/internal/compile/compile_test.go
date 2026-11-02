@@ -101,7 +101,7 @@ func TestCompileCachesSecondRun(t *testing.T) {
 	c := newTestCompiler(t, runner, 4)
 	assets := map[string]string{"img/a.png": "r2/asset-a"}
 	store := c.store.(*MemoryStore)
-	_ = store.Put(t.Context(), "r2/asset-a", []byte("png-bytes"))
+	_ = store.Put(t.Context(), "r2/asset-a", PlaceholderImage("a.png"))
 
 	first, err := c.Compile(t.Context(), okTex, assets, "pdflatex")
 	if err != nil {

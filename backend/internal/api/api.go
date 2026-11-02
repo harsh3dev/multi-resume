@@ -8,8 +8,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"log/slog"
 	"net/http"
+	"path"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -25,9 +29,11 @@ import (
 )
 
 const (
-	maxTexSize   = 512 * 1024
+	maxTexSize   = compile.MaxTexBytes
 	maxImageSize = 5 * 1024 * 1024
-	maxJSONBody  = 64 * 1024
+	// maxImagePixels bounds either dimension of an uploaded image.
+	maxImagePixels = 8000
+	maxJSONBody    = 64 * 1024
 )
 
 // Store is the handler-facing DB contract (implemented by sqlc queries).
@@ -50,7 +56,9 @@ type Store interface {
 	GetDraftByResumeForUser(ctx context.Context, arg store.GetDraftByResumeForUserParams) (store.Draft, error)
 	InsertFailedUpload(ctx context.Context, arg store.InsertFailedUploadParams) error
 	InsertAsset(ctx context.Context, arg store.InsertAssetParams) (store.Asset, error)
+	MergeResumeDraftsAssetMap(ctx context.Context, arg store.MergeResumeDraftsAssetMapParams) error
 	UpdateDraftWithRevision(ctx context.Context, arg store.UpdateDraftWithRevisionParams) (store.Draft, error)
+	SetDraftCompileResult(ctx context.Context, arg store.SetDraftCompileResultParams) (int64, error)
 	InsertJob(ctx context.Context, arg store.InsertJobParams) (store.Job, error)
 	InsertTailorRun(ctx context.Context, arg store.InsertTailorRunParams) (store.TailorRun, error)
 	FinishTailorRun(ctx context.Context, arg store.FinishTailorRunParams) error
@@ -129,6 +137,7 @@ func Router(deps Deps) http.Handler {
 		r.Post("/resumes/{id}/assets", deps.uploadAsset)
 		r.Post("/drafts/{id}/ops", deps.applyOps)
 		r.Put("/drafts/{id}/source", deps.putSource)
+		r.Post("/drafts/{id}/compile", deps.compileDraft)
 		r.Post("/drafts/{id}/tailor", deps.tailorDraft)
 		r.Post("/tailor-runs/{id}/decisions", deps.tailorDecisions)
 	})
@@ -265,8 +274,10 @@ func (d Deps) createResume(w http.ResponseWriter, r *http.Request) {
 	// Compile best-effort so the preview appears immediately; a compile
 	// failure leaves the key empty and the editor shows it after edits.
 	var lastGoodPdfKey pgtype.Text
-	if d.Compiler != nil {
-		if res, cerr := d.Compiler.Compile(r.Context(), src, nil, tree.Meta.Compiler); cerr == nil {
+	// The one compile that happens without an explicit Save click; it draws on
+	// the same per-user budget so uploads cannot bypass the compile caps.
+	if d.Compiler != nil && compileLimit.allow(id.UserID) && compileDailyLimit.allow(id.UserID) {
+		if res, cerr := d.Compiler.Compile(r.Context(), src, compileAssets(tree, nil), tree.Meta.Compiler); cerr == nil {
 			lastGoodPdfKey = pgtype.Text{String: res.PDFKey, Valid: true}
 		} else {
 			slog.Warn("upload compile failed", "error", cerr.Error())
@@ -286,6 +297,9 @@ func (d Deps) createResume(w http.ResponseWriter, r *http.Request) {
 		ResumeID: resume.ID, VariationID: variation.ID,
 		SourceTex: src, SourceSha256: tree.SourceHash, Tree: treeJSON, AssetMap: []byte("{}"),
 		LastGoodPdfKey: lastGoodPdfKey,
+		// A successful upload compile leaves the preview current; otherwise the
+		// editor opens with the Save button highlighted for a one-click retry.
+		NeedsCompile: !lastGoodPdfKey.Valid,
 	})
 	if err != nil {
 		slog.Error("insert draft", "error", err)
@@ -437,7 +451,8 @@ func (d Deps) getDraft(w http.ResponseWriter, r *http.Request) {
 			tree = *fresh
 		}
 	}
-	resp := map[string]any{"tree": tree, "revision": draft.Revision, "sourceTex": draft.SourceTex}
+	markUploaded(&tree, draft.AssetMap)
+	resp := map[string]any{"tree": tree, "revision": draft.Revision, "sourceTex": draft.SourceTex, "pdfStale": draft.NeedsCompile}
 	if draft.LastGoodPdfKey.Valid && d.Presign != nil {
 		if url, err := d.Presign.PresignGet(r.Context(), draft.LastGoodPdfKey.String); err == nil {
 			resp["pdfUrl"] = url
@@ -475,9 +490,10 @@ func (d Deps) getDraftByResume(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	markUploaded(&tree, draft.AssetMap)
 	resp := map[string]any{
 		"draftId": draft.ID, "tree": tree, "revision": draft.Revision,
-		"sourceTex": draft.SourceTex,
+		"sourceTex": draft.SourceTex, "pdfStale": draft.NeedsCompile,
 	}
 	if draft.LastGoodPdfKey.Valid && d.Presign != nil {
 		if url, err := d.Presign.PresignGet(r.Context(), draft.LastGoodPdfKey.String); err == nil {
@@ -520,7 +536,36 @@ func (d Deps) uploadAsset(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid upload")
 		return
 	}
-	file, header, err := r.FormFile("file")
+	// The upload targets one image the .tex references; it is checked against
+	// the draft's own references so a client can't write arbitrary paths.
+	refPath := r.FormValue("path")
+	draftID, err := uuid.Parse(r.FormValue("draftId"))
+	if err != nil || refPath == "" {
+		writeError(w, http.StatusBadRequest, "missing path or draftId")
+		return
+	}
+	draft, err := d.Store.GetDraftForUser(r.Context(), store.GetDraftForUserParams{ID: draftID, UserID: id.UserID})
+	if err != nil || draft.ResumeID != resumeID {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	var tree model.Resume
+	if err := json.Unmarshal(draft.Tree, &tree); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	referenced := false
+	for _, a := range tree.Assets {
+		if a.Path == refPath {
+			referenced = true
+			break
+		}
+	}
+	if !referenced {
+		writeError(w, http.StatusBadRequest, "that image is not used by this resume")
+		return
+	}
+	file, _, err := r.FormFile("file")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "missing file")
 		return
@@ -539,9 +584,34 @@ func (d Deps) uploadAsset(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "only png and jpg images are supported")
 		return
 	}
-	texPath := sanitizeTexPath(header.Filename)
-	if texPath == "" {
-		texPath = "image" + ext
+	// Decode the header (not just the magic bytes) and bound the pixel count.
+	if cfg, _, err := image.DecodeConfig(bytes.NewReader(data)); err != nil || cfg.Width < 1 || cfg.Height < 1 || cfg.Width > maxImagePixels || cfg.Height > maxImagePixels {
+		writeError(w, http.StatusBadRequest, "unreadable or oversized image")
+		return
+	}
+	// The file is stored at the path the .tex asks for. With no extension in the
+	// reference, LaTeX picks the extension itself, so use the uploaded type's.
+	texPath := refPath
+	switch strings.ToLower(path.Ext(refPath)) {
+	case "":
+		texPath = refPath + ext
+	case ".png":
+		if mime != "image/png" {
+			writeError(w, http.StatusBadRequest, "this image must be a PNG")
+			return
+		}
+	case ".jpg", ".jpeg":
+		if mime != "image/jpeg" {
+			writeError(w, http.StatusBadRequest, "this image must be a JPEG")
+			return
+		}
+	default:
+		writeError(w, http.StatusBadRequest, "unsupported image type")
+		return
+	}
+	if err := compile.ValidateAssetPath(texPath); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid image path")
+		return
 	}
 	sumBytes := sha256.Sum256(data)
 	sum := hex.EncodeToString(sumBytes[:])
@@ -556,6 +626,14 @@ func (d Deps) uploadAsset(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		slog.Error("insert asset", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	patch, _ := json.Marshal(map[string]string{texPath: key})
+	if err := d.Store.MergeResumeDraftsAssetMap(r.Context(), store.MergeResumeDraftsAssetMapParams{
+		ResumeID: resumeID, UserID: id.UserID, Column3: patch,
+	}); err != nil {
+		slog.Error("merge asset map", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}

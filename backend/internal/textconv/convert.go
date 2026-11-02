@@ -3,8 +3,10 @@ package textconv
 import (
 	"errors"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
+	"github.com/harsh3dev/multi-resume/backend/internal/latex"
 	"github.com/harsh3dev/multi-resume/backend/internal/model"
 )
 
@@ -30,124 +32,197 @@ func ToValue(src string, span model.Span) model.Text {
 }
 
 // singleHref reports whether the span is exactly one \href{url}{text} call and
-// returns the URL with its absolute span.
+// returns the URL with its absolute span. The two arguments may be separated
+// by whitespace, a newline or a comment.
 func singleHref(src string, span model.Span) (string, model.Span, bool) {
-	raw := src[span[0]:span[1]]
-	if !strings.HasPrefix(raw, `\href{`) {
+	nodes := latex.Parse(src, span[0], span[1], latex.Options{})
+	if len(nodes) != 1 || nodes[0].Name != `\href` || len(nodes[0].Args) != 2 || nodes[0].Start != span[0] || nodes[0].End != span[1] {
 		return "", model.Span{}, false
 	}
-	urlStart := len(`\href{`)
-	urlEnd, ok := closingBrace(raw, urlStart)
-	if !ok || urlEnd+1 >= len(raw) || raw[urlEnd+1] != '{' {
-		return "", model.Span{}, false
-	}
-	textEnd, ok := closingBrace(raw, urlEnd+2)
-	if !ok || textEnd != len(raw)-1 {
-		return "", model.Span{}, false
-	}
-	url := raw[urlStart:urlEnd]
+	arg := nodes[0].Args[0]
+	url := src[arg.Inner[0]:arg.Inner[1]]
 	if strings.ContainsAny(url, ") \t\n{}") {
 		return "", model.Span{}, false
 	}
-	return url, model.Span{span[0] + urlStart, span[0] + urlEnd}, true
+	return url, model.Span{arg.Inner[0], arg.Inner[1]}, true
 }
 
+// Protected tokens: an inline piece the converter does not understand (an
+// unknown command, a group, a custom macro) is carried through the value as
+// ⟦verbatim LaTeX⟧. The rest of the field stays editable text; the token is
+// written back unchanged and cannot be invented by an edit (see ToLatex).
+const (
+	tokOpen  = "⟦"
+	tokClose = "⟧"
+)
+
 func decode(src string) (string, bool) {
+	if strings.Contains(src, tokOpen) || strings.Contains(src, tokClose) {
+		return "", false
+	}
 	var out strings.Builder
+	if !decodeNodes(src, latex.Parse(src, 0, len(src), latex.Options{}), &out) {
+		return "", false
+	}
+	value := out.String()
+	// A field made only of protected pieces has nothing to edit: keep it raw.
+	if strings.Contains(value, tokOpen) && !strings.ContainsFunc(stripTokens(value), func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) {
+		return "", false
+	}
+	return value, true
+}
+
+// protectedTokens lists the ⟦…⟧ tokens of a value in order; ok is false when
+// they are malformed (unbalanced or nested).
+func protectedTokens(value string) (tokens []string, ok bool) {
+	for i := 0; i < len(value); {
+		switch {
+		case strings.HasPrefix(value[i:], tokClose):
+			return nil, false
+		case strings.HasPrefix(value[i:], tokOpen):
+			end := strings.Index(value[i+len(tokOpen):], tokClose)
+			if end < 0 {
+				return nil, false
+			}
+			inner := value[i+len(tokOpen) : i+len(tokOpen)+end]
+			if strings.Contains(inner, tokOpen) {
+				return nil, false
+			}
+			tokens = append(tokens, inner)
+			i += len(tokOpen) + end + len(tokClose)
+		default:
+			i++
+		}
+	}
+	return tokens, true
+}
+
+// stripTokens removes well-formed tokens, leaving the editable text.
+func stripTokens(value string) string {
+	var out strings.Builder
+	for i := 0; i < len(value); {
+		if strings.HasPrefix(value[i:], tokOpen) {
+			if end := strings.Index(value[i:], tokClose); end >= 0 {
+				i += end + len(tokClose)
+				continue
+			}
+		}
+		out.WriteByte(value[i])
+		i++
+	}
+	return out.String()
+}
+
+var mathValues = []struct{ tex, value string }{
+	{`$\sim$`, "~"}, {`$>$`, ">"}, {`$<$`, "<"},
+	{`$\times$`, "×"}, {`$\cdot$`, "·"}, {`$\rightarrow$`, "→"},
+	{`$\geq$`, "≥"}, {`$\leq$`, "≤"}, {`$\pm$`, "±"}, {`$|$`, "|"},
+}
+
+// decodeNodes renders the nodes as mini-markdown. It reports false at the
+// first construct it cannot represent, so the caller keeps the field raw.
+func decodeNodes(src string, nodes []latex.Node, out *strings.Builder) bool {
+	prevTokenEnd := -1 // end offset of the token just written, to merge neighbours
+	emitToken := func(n latex.Node) {
+		raw := src[n.Start:n.End]
+		if n.Start == prevTokenEnd {
+			// Adjacent to the previous token: extend it (drop its closing mark).
+			cur := out.String()
+			out.Reset()
+			out.WriteString(strings.TrimSuffix(cur, tokClose))
+			out.WriteString(raw)
+			out.WriteString(tokClose)
+		} else {
+			out.WriteString(tokOpen)
+			out.WriteString(raw)
+			out.WriteString(tokClose)
+		}
+		prevTokenEnd = n.End
+	}
+	for _, n := range nodes {
+		if n.Unclosed {
+			return false
+		}
+		raw := src[n.Start:n.End]
+		switch n.Kind {
+		case latex.KSpace:
+			out.WriteString(raw)
+		case latex.KText:
+			if !decodeText(raw, out) {
+				return false
+			}
+		case latex.KMath:
+			ok := false
+			for _, pair := range mathValues {
+				if raw == pair.tex {
+					out.WriteString(pair.value)
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				emitToken(n)
+				continue
+			}
+		case latex.KCommand:
+			if len(n.Name) == 2 && strings.ContainsRune(`%&#_$*[]`, rune(n.Name[1])) {
+				out.WriteByte(n.Name[1])
+				break
+			}
+			if !decodeKnownCommand(src, n, out) {
+				emitToken(n)
+				continue
+			}
+		case latex.KGroup, latex.KEnv:
+			emitToken(n)
+			continue
+		default: // comments cannot sit inside an editable value
+			return false
+		}
+		prevTokenEnd = -1
+	}
+	return true
+}
+
+// decodeKnownCommand renders the commands that map to mini-markdown. It
+// reports false (writing nothing) for anything else, so the caller can
+// protect the call as a token.
+func decodeKnownCommand(src string, n latex.Node, out *strings.Builder) bool {
+	switch n.Name {
+	case `\href`:
+		if len(n.Args) != 2 {
+			return false
+		}
+		url := src[n.Args[0].Inner[0]:n.Args[0].Inner[1]]
+		if strings.ContainsAny(url, ") \t\n{}") {
+			return false
+		}
+		var label strings.Builder
+		if !decodeNodes(src, n.Args[1].Nodes, &label) {
+			return false
+		}
+		out.WriteString("[" + label.String() + "](" + url + ")")
+		return true
+	case `\textbf`, `\textit`, `\emph`, `\underline`, `\uline`:
+		if len(n.Args) != 1 {
+			return false
+		}
+		mark := map[string]string{`\textbf`: "**", `\textit`: "*", `\emph`: "*", `\underline`: "", `\uline`: ""}[n.Name]
+		var inner strings.Builder
+		if !decodeNodes(src, n.Args[0].Nodes, &inner) {
+			return false
+		}
+		out.WriteString(mark + inner.String() + mark)
+		return true
+	}
+	return false
+}
+
+func decodeText(src string, out *strings.Builder) bool {
 	for i := 0; i < len(src); {
 		switch src[i] {
-		case '\\':
-			if i+1 >= len(src) {
-				return "", false
-			}
-			if strings.ContainsRune(`%&#_$*[]`, rune(src[i+1])) {
-				out.WriteByte(src[i+1])
-				i += 2
-				continue
-			}
-			if strings.HasPrefix(src[i:], `\href{`) {
-				urlStart := i + len(`\href{`)
-				urlEnd, ok := closingBrace(src, urlStart)
-				if !ok || urlEnd+1 >= len(src) || src[urlEnd+1] != '{' {
-					return "", false
-				}
-				textEnd, ok := closingBrace(src, urlEnd+2)
-				if !ok {
-					return "", false
-				}
-				url := src[urlStart:urlEnd]
-				label, ok := decode(src[urlEnd+2 : textEnd])
-				if !ok || strings.ContainsAny(url, ") \t\n{}") {
-					return "", false
-				}
-				out.WriteByte('[')
-				out.WriteString(label)
-				out.WriteString("](")
-				out.WriteString(url)
-				out.WriteByte(')')
-				i = textEnd + 1
-				continue
-			}
-			command, mark := "", ""
-			for _, item := range []struct{ prefix, marker string }{
-				{`\textbf{`, "**"}, {`\textit{`, "*"}, {`\emph{`, "*"},
-			} {
-				if strings.HasPrefix(src[i:], item.prefix) {
-					command, mark = item.prefix, item.marker
-					break
-				}
-			}
-			if command == "" && strings.HasPrefix(src[i:], `\underline{`) {
-				start := i + len(`\underline{`)
-				end, ok := closingBrace(src, start)
-				if !ok {
-					return "", false
-				}
-				inner, ok := decode(src[start:end])
-				if !ok {
-					return "", false
-				}
-				out.WriteString(inner)
-				i = end + 1
-				continue
-			}
-			if command != "" {
-				start := i + len(command)
-				end, ok := closingBrace(src, start)
-				if !ok {
-					return "", false
-				}
-				inner, ok := decode(src[start:end])
-				if !ok {
-					return "", false
-				}
-				out.WriteString(mark)
-				out.WriteString(inner)
-				out.WriteString(mark)
-				i = end + 1
-				continue
-			}
-			return "", false
-		case '{', '}', '%', '&', '#', '_':
-			return "", false
-		case '$':
-			matched := false
-			for _, pair := range []struct{ tex, value string }{
-				{`$\sim$`, "~"}, {`$>$`, ">"}, {`$<$`, "<"},
-				{`$\times$`, "×"}, {`$\cdot$`, "·"}, {`$\rightarrow$`, "→"},
-				{`$\geq$`, "≥"}, {`$\leq$`, "≤"}, {`$\pm$`, "±"}, {`$|$`, "|"},
-			} {
-				if strings.HasPrefix(src[i:], pair.tex) {
-					out.WriteString(pair.value)
-					i += len(pair.tex)
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				return "", false
-			}
-			continue
+		case '{', '}', '%', '&', '#', '_', '\\', '$':
+			return false
 		case '~':
 			out.WriteByte(' ')
 			i++
@@ -169,7 +244,7 @@ func decode(src string) (string, bool) {
 			i++
 		}
 	}
-	return out.String(), true
+	return true
 }
 
 func closingBrace(src string, start int) (int, bool) {
@@ -208,6 +283,11 @@ func ToLatex(original model.Text, value string, src string) (string, error) {
 	if err := Validate(original.Mode, value); err != nil {
 		return "", err
 	}
+	// Protected tokens may only be kept from the original, never invented:
+	// an edit must not be able to smuggle arbitrary LaTeX into the file.
+	if err := checkTokens(original.Value, value); err != nil {
+		return "", err
+	}
 	if original.Mode == "raw" {
 		return value, nil
 	}
@@ -215,12 +295,12 @@ func ToLatex(original model.Text, value string, src string) (string, error) {
 	if strings.Contains(src[original.Span[0]:original.Span[1]], `\emph`) {
 		italic = `\emph`
 	}
-	return encode(value, italic)
+	return encode(value, italic, existingURLs(original.Value))
 }
 
 // encode turns a mini-markdown value into LaTeX source. User-escaped
 // characters (\*, \[, \]) become literals; LaTeX specials are escaped.
-func encode(value, italic string) (string, error) {
+func encode(value, italic string, known map[string]bool) (string, error) {
 	var out strings.Builder
 	for i := 0; i < len(value); {
 		switch value[i] {
@@ -239,7 +319,7 @@ func encode(value, italic string) (string, error) {
 					i++
 					continue
 				}
-				encoded, err := encode(inner, italic)
+				encoded, err := encode(inner, italic, known)
 				if err != nil {
 					return "", err
 				}
@@ -255,7 +335,7 @@ func encode(value, italic string) (string, error) {
 				i++
 				continue
 			}
-			encoded, err := encode(inner, italic)
+			encoded, err := encode(inner, italic, known)
 			if err != nil {
 				return "", err
 			}
@@ -264,6 +344,19 @@ func encode(value, italic string) (string, error) {
 			out.WriteString(encoded)
 			out.WriteByte('}')
 			i = next
+		case '\xe2': // possibly the start of a protected token (⟦ is E2 9F A6)
+			if strings.HasPrefix(value[i:], tokOpen) {
+				end := strings.Index(value[i:], tokClose)
+				if end < 0 {
+					return "", errors.New("malformed protected token")
+				}
+				out.WriteString(value[i+len(tokOpen) : i+end])
+				i += end + len(tokClose)
+				continue
+			}
+			r, size := utf8.DecodeRuneInString(value[i:])
+			out.WriteString(encodeRune(r))
+			i += size
 		case '[':
 			close := strings.IndexByte(value[i:], ']')
 			if close < 0 || i+close+1 >= len(value) || value[i+close+1] != '(' {
@@ -280,10 +373,10 @@ func encode(value, italic string) (string, error) {
 				continue
 			}
 			url := rest[:paren]
-			if !allowedURL(url) {
+			if !allowedURL(url) && !known[url] {
 				return "", errors.New("link URL must use https, http, or mailto")
 			}
-			encoded, err := encode(label, italic)
+			encoded, err := encode(label, italic, known)
 			if err != nil {
 				return "", err
 			}
@@ -295,37 +388,39 @@ func encode(value, italic string) (string, error) {
 			i += close + 2 + paren + 1
 		default:
 			r, size := utf8.DecodeRuneInString(value[i:])
-			switch r {
-			case '%', '&', '#', '_', '$':
-				out.WriteByte('\\')
-				out.WriteRune(r)
-			case '–':
-				out.WriteString("--")
-			case '—':
-				out.WriteString("---")
-			case '~':
-				out.WriteString(`$\sim$`)
-			case '×':
-				out.WriteString(`$\times$`)
-			case '·':
-				out.WriteString(`$\cdot$`)
-			case '→':
-				out.WriteString(`$\rightarrow$`)
-			case '≥':
-				out.WriteString(`$\geq$`)
-			case '≤':
-				out.WriteString(`$\leq$`)
-			case '±':
-				out.WriteString(`$\pm$`)
-			case '|':
-				out.WriteString(`$|$`)
-			default:
-				out.WriteRune(r)
-			}
+			out.WriteString(encodeRune(r))
 			i += size
 		}
 	}
 	return out.String(), nil
+}
+
+func encodeRune(r rune) string {
+	switch r {
+	case '%', '&', '#', '_', '$':
+		return `\` + string(r)
+	case '–':
+		return "--"
+	case '—':
+		return "---"
+	case '~':
+		return `$\sim$`
+	case '×':
+		return `$\times$`
+	case '·':
+		return `$\cdot$`
+	case '→':
+		return `$\rightarrow$`
+	case '≥':
+		return `$\geq$`
+	case '≤':
+		return `$\leq$`
+	case '±':
+		return `$\pm$`
+	case '|':
+		return `$|$`
+	}
+	return string(r)
 }
 
 func marked(value string, start int, mark string) (string, int, bool) {
@@ -336,13 +431,51 @@ func marked(value string, start int, mark string) (string, int, bool) {
 	return value[start : start+end], start + end + len(mark), true
 }
 
+// existingURLs lists the link targets already present in a value. A link the
+// user did not touch keeps its target even when the scheme is unusual (tel:,
+// an empty href); only new targets must pass allowedURL.
+func existingURLs(value string) map[string]bool {
+	known := map[string]bool{}
+	for i := 0; i < len(value); i++ {
+		if value[i] != ']' || i+1 >= len(value) || value[i+1] != '(' {
+			continue
+		}
+		if end := strings.IndexByte(value[i+2:], ')'); end >= 0 {
+			known[value[i+2:i+2+end]] = true
+		}
+	}
+	return known
+}
+
 func allowedURL(url string) bool {
-	for _, scheme := range []string{"https://", "http://", "mailto:"} {
+	for _, scheme := range []string{"https://", "http://", "mailto:", "tel:"} {
 		if strings.HasPrefix(url, scheme) {
 			return !strings.ContainsAny(url, "{}\\")
 		}
 	}
 	return false
+}
+
+func checkTokens(original, value string) error {
+	have, ok := protectedTokens(original)
+	if !ok && strings.Contains(original, tokOpen) {
+		have = nil
+	}
+	want, ok := protectedTokens(value)
+	if !ok {
+		return errors.New("malformed protected token")
+	}
+	pool := map[string]int{}
+	for _, t := range have {
+		pool[t]++
+	}
+	for _, t := range want {
+		if pool[t] == 0 {
+			return errors.New("protected LaTeX pieces cannot be added or changed")
+		}
+		pool[t]--
+	}
+	return nil
 }
 
 func Validate(mode, value string) error {
@@ -353,6 +486,10 @@ func Validate(mode, value string) error {
 		return errors.New("invalid text mode")
 	}
 	if mode == "text" {
+		if _, ok := protectedTokens(value); !ok {
+			return errors.New("malformed protected token")
+		}
+		value = stripTokens(value)
 		if strings.ContainsAny(value, "{}") {
 			return errors.New("LaTeX braces are not allowed in text mode")
 		}

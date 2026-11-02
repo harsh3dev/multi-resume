@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"sort"
 	"sync"
@@ -107,4 +108,39 @@ func (m *MemoryStore) Put(_ context.Context, key string, data []byte) error {
 	copy(stored, data)
 	m.objects[key] = stored
 	return nil
+}
+
+// ObjectCache is a PDFCache kept in the object store, so every instance of the
+// main service shares it and it survives restarts. Each entry is a small
+// sidecar object next to the PDF. Any read failure counts as a miss: the worst
+// case is one redundant compile.
+type ObjectCache struct{ Store ObjectStore }
+
+func NewObjectCache(s ObjectStore) *ObjectCache { return &ObjectCache{Store: s} }
+
+type objectCacheMeta struct {
+	PDFKey    string `json:"pdfKey"`
+	PageCount int    `json:"pageCount"`
+}
+
+func objectCacheKey(key string) string { return "pdf/" + key + ".meta.json" }
+
+func (c *ObjectCache) Get(ctx context.Context, key string) (CacheEntry, bool, error) {
+	raw, err := c.Store.Get(ctx, objectCacheKey(key))
+	if err != nil {
+		return CacheEntry{}, false, nil
+	}
+	var m objectCacheMeta
+	if err := json.Unmarshal(raw, &m); err != nil || m.PageCount < 1 || m.PDFKey != "pdf/"+key+".pdf" {
+		return CacheEntry{}, false, nil
+	}
+	return CacheEntry{Key: key, PDFKey: m.PDFKey, PageCount: m.PageCount}, true, nil
+}
+
+func (c *ObjectCache) Put(ctx context.Context, e CacheEntry) error {
+	raw, err := json.Marshal(objectCacheMeta{PDFKey: e.PDFKey, PageCount: e.PageCount})
+	if err != nil {
+		return err
+	}
+	return c.Store.Put(ctx, objectCacheKey(e.Key), raw)
 }

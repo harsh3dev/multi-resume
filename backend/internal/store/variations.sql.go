@@ -13,11 +13,11 @@ import (
 )
 
 const cloneDraftForVariation = `-- name: CloneDraftForVariation :one
-insert into drafts (resume_id, variation_id, source_tex, source_sha256, tree, asset_map, last_good_pdf_key)
-select d.resume_id, $2, d.source_tex, d.source_sha256, d.tree, d.asset_map, d.last_good_pdf_key
+insert into drafts (resume_id, variation_id, source_tex, source_sha256, tree, asset_map, last_good_pdf_key, needs_compile)
+select d.resume_id, $2, d.source_tex, d.source_sha256, d.tree, d.asset_map, d.last_good_pdf_key, d.needs_compile
 from drafts d
 where d.variation_id = $1
-returning id, resume_id, source_tex, source_sha256, tree, asset_map, last_good_pdf_key, compile_error, revision, updated_at, variation_id
+returning id, resume_id, source_tex, source_sha256, tree, asset_map, last_good_pdf_key, compile_error, revision, updated_at, variation_id, needs_compile
 `
 
 type CloneDraftForVariationParams struct {
@@ -40,6 +40,7 @@ func (q *Queries) CloneDraftForVariation(ctx context.Context, arg CloneDraftForV
 		&i.Revision,
 		&i.UpdatedAt,
 		&i.VariationID,
+		&i.NeedsCompile,
 	)
 	return i, err
 }
@@ -80,7 +81,7 @@ func (q *Queries) GetDefaultVariationForResume(ctx context.Context, arg GetDefau
 }
 
 const getDraftByVariationForUser = `-- name: GetDraftByVariationForUser :one
-select d.id, d.resume_id, d.source_tex, d.source_sha256, d.tree, d.asset_map, d.last_good_pdf_key, d.compile_error, d.revision, d.updated_at, d.variation_id
+select d.id, d.resume_id, d.source_tex, d.source_sha256, d.tree, d.asset_map, d.last_good_pdf_key, d.compile_error, d.revision, d.updated_at, d.variation_id, d.needs_compile
 from drafts d
 join resumes r on r.id = d.resume_id
 where d.variation_id = $1 and r.user_id = $2 and r.deleted_at is null
@@ -106,6 +107,7 @@ func (q *Queries) GetDraftByVariationForUser(ctx context.Context, arg GetDraftBy
 		&i.Revision,
 		&i.UpdatedAt,
 		&i.VariationID,
+		&i.NeedsCompile,
 	)
 	return i, err
 }

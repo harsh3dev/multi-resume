@@ -69,7 +69,9 @@ go test ./internal/engine/ -run TestEditabilityMetric -v -args -engine.metric
 
 ## Deploy
 
-- **Backend**: `fly deploy` from `backend/` (Dockerfile includes TeX Live, poppler, bubblewrap; ≥1GB RAM). Set secrets per `backend/.env.example` via `fly secrets set`.
+- **Backend API**: `backend/Dockerfile.server` (static Go binary, no TeX). Set secrets per `backend/.env.example`, plus `COMPILER_URL`/`COMPILER_AUTH`.
+- **Compiler service**: `backend/Dockerfile.compiler` (TeX Live + `cmd/compiler`), deployed separately and scaled on its own — see `docs/compiler-service.md` (Cloud Run steps and the security checklist).
+- `backend/Dockerfile` is the all-in-one image for local Docker use (in-process bubblewrap compiles).
 - **Frontend**: Vercel project rooted at `apps/web`; set `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `GO_BACKEND_URL` (the Fly app URL). Supabase Auth → Site URL = prod domain.
 
 See `tasks/FINAL-BLOCKERS.md` for the one-time external setup checklist and the live-verification steps deferred from the build.

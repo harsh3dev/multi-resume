@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"regexp"
 
 	"github.com/harsh3dev/multi-resume/backend/internal/model"
 )
@@ -99,6 +100,9 @@ func carryListIDs(expected, reparsed *model.BulletList) {
 	reparsed.ID = expected.ID
 	for i := 0; i < len(expected.Bullets) && i < len(reparsed.Bullets); i++ {
 		reparsed.Bullets[i].ID = expected.Bullets[i].ID
+		for j := 0; j < len(expected.Bullets[i].Children) && j < len(reparsed.Bullets[i].Children); j++ {
+			carryListIDs(&expected.Bullets[i].Children[j], &reparsed.Bullets[i].Children[j])
+		}
 	}
 }
 
@@ -233,7 +237,7 @@ func itemEqual(a, b *model.SectionItem) bool {
 		return a.Skill.Hidden == b.Skill.Hidden &&
 			fieldEqual(a.Skill.Label, b.Skill.Label) && fieldEqual(a.Skill.Value, b.Skill.Value)
 	case a.Paragraph != nil:
-		return fieldEqual(a.Paragraph.Text, b.Paragraph.Text)
+		return a.Paragraph.Hidden == b.Paragraph.Hidden && fieldEqual(a.Paragraph.Text, b.Paragraph.Text)
 	case a.Opaque != nil:
 		return a.Opaque.Reason == b.Opaque.Reason
 	}
@@ -263,13 +267,18 @@ func listEqual(a, b *model.BulletList) bool {
 	if a == nil {
 		return true
 	}
-	if a.Open != b.Open || a.Close != b.Close || a.BulletCommand != b.BulletCommand ||
+	if a.Hidden != b.Hidden || a.Open != b.Open || a.Close != b.Close || a.BulletCommand != b.BulletCommand ||
 		len(a.Bullets) != len(b.Bullets) {
 		return false
 	}
 	for i := range a.Bullets {
-		if a.Bullets[i].Hidden != b.Bullets[i].Hidden || !textEqual(a.Bullets[i].Text, b.Bullets[i].Text) {
+		if a.Bullets[i].Hidden != b.Bullets[i].Hidden || !textEqual(a.Bullets[i].Text, b.Bullets[i].Text) || len(a.Bullets[i].Children) != len(b.Bullets[i].Children) {
 			return false
+		}
+		for j := range a.Bullets[i].Children {
+			if !listEqual(&a.Bullets[i].Children[j], &b.Bullets[i].Children[j]) {
+				return false
+			}
 		}
 	}
 	return true
@@ -286,8 +295,14 @@ func fieldPtrEqual(a, b *model.Field) bool {
 	return a == nil || fieldEqual(*a, *b)
 }
 
+// indentRun matches a line break with the indentation around it. Hiding a
+// node comments its lines, which shifts the indentation of continuation
+// lines; LaTeX treats that whitespace as one space either way, so the tree
+// comparison ignores it.
+var indentRun = regexp.MustCompile(`[ \t]*\r?\n[ \t]*`)
+
 func textEqual(a, b model.Text) bool {
-	if a.Value != b.Value || a.Mode != b.Mode {
+	if indentRun.ReplaceAllString(a.Value, "\n") != indentRun.ReplaceAllString(b.Value, "\n") || a.Mode != b.Mode {
 		return false
 	}
 	if (a.URL == nil) != (b.URL == nil) {

@@ -8,7 +8,6 @@ import (
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/harsh3dev/multi-resume/backend/internal/engine"
 	"github.com/harsh3dev/multi-resume/backend/internal/model"
@@ -75,19 +74,11 @@ func (d Deps) applyOps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Compile best-effort: failure keeps the last good PDF and records the
-	// error. Without a compiler (dev), the draft still saves.
+	// Saving never compiles: the PDF is refreshed only by POST
+	// /api/drafts/:id/compile. The stored PDF and last compile error are
+	// carried over untouched; the store marks the draft as needing a compile.
 	pdfKey := draft.LastGoodPdfKey
 	compileErr := draft.CompileError
-	if d.Compiler != nil {
-		res, cerr := d.Compiler.Compile(r.Context(), result.Source, nil, result.Tree.Meta.Compiler)
-		if cerr != nil {
-			compileErr = pgtype.Text{String: cerr.Error(), Valid: true}
-		} else {
-			pdfKey = pgtype.Text{String: res.PDFKey, Valid: true}
-			compileErr = pgtype.Text{}
-		}
-	}
 	updated, err := d.Store.UpdateDraftWithRevision(r.Context(), store.UpdateDraftWithRevisionParams{
 		ID:             draft.ID,
 		Revision:       draft.Revision,
@@ -108,18 +99,8 @@ func (d Deps) applyOps(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	resp := map[string]any{"revision": updated.Revision, "tree": result.Tree, "sourceTex": result.Source}
-	if compileErr.Valid {
-		resp["compileError"] = compileErr.String
-	} else if pdfKey.Valid {
-		pdf := map[string]any{"key": pdfKey.String}
-		if d.Presign != nil {
-			if url, err := d.Presign.PresignGet(r.Context(), pdfKey.String); err == nil {
-				pdf["url"] = url
-			}
-		}
-		resp["pdf"] = pdf
-	}
+	markUploaded(result.Tree, draft.AssetMap)
+	resp := map[string]any{"revision": updated.Revision, "tree": result.Tree, "sourceTex": result.Source, "pdfStale": true}
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -183,17 +164,9 @@ func (d Deps) putSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	// Save only; compiling is a separate, explicit request (see compileDraft).
 	pdfKey := draft.LastGoodPdfKey
 	compileErr := draft.CompileError
-	if d.Compiler != nil {
-		res, cerr := d.Compiler.Compile(r.Context(), req.Source, nil, newTree.Meta.Compiler)
-		if cerr != nil {
-			compileErr = pgtype.Text{String: cerr.Error(), Valid: true}
-		} else {
-			pdfKey = pgtype.Text{String: res.PDFKey, Valid: true}
-			compileErr = pgtype.Text{}
-		}
-	}
 	updated, err := d.Store.UpdateDraftWithRevision(r.Context(), store.UpdateDraftWithRevisionParams{
 		ID:             draft.ID,
 		Revision:       draft.Revision,
@@ -212,18 +185,8 @@ func (d Deps) putSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	resp := map[string]any{"revision": updated.Revision, "tree": newTree}
-	if compileErr.Valid {
-		resp["compileError"] = compileErr.String
-	} else if pdfKey.Valid {
-		pdf := map[string]any{"key": pdfKey.String}
-		if d.Presign != nil {
-			if url, err := d.Presign.PresignGet(r.Context(), pdfKey.String); err == nil {
-				pdf["url"] = url
-			}
-		}
-		resp["pdf"] = pdf
-	}
+	markUploaded(newTree, draft.AssetMap)
+	resp := map[string]any{"revision": updated.Revision, "tree": newTree, "sourceTex": req.Source, "pdfStale": true}
 	writeJSON(w, http.StatusOK, resp)
 }
 

@@ -98,12 +98,39 @@ func main() {
 		}
 		deps.Storage = r2
 		deps.Presign = r2
-		comp, err := compile.New(compile.Options{
-			Cache:       compile.NewMemoryCache(),
-			Store:       r2Store{r2},
-			Runner:      compile.BwrapRunner{},
-			MaxParallel: cfg.MaxParallelCompiles,
-		})
+		opts := compile.Options{
+			// Shared across instances and restarts (sidecar objects in R2).
+			Cache: compile.NewObjectCache(r2Store{r2}),
+			Store: r2Store{r2},
+		}
+		if cfg.CompilerURL != "" {
+			// Production: the TeX toolchain lives in the separate compiler service.
+			var tokens compile.TokenSource
+			switch cfg.CompilerAuth {
+			case "iam":
+				tokens = &compile.MetadataIDToken{Audience: cfg.CompilerURL}
+			case "bearer":
+				if cfg.CompilerToken == "" {
+					logger.Error("COMPILER_AUTH=bearer needs COMPILER_TOKEN")
+					os.Exit(1)
+				}
+				tokens = compile.StaticToken(cfg.CompilerToken)
+			default:
+				logger.Error("COMPILER_URL is set: set COMPILER_AUTH to iam or bearer")
+				os.Exit(1)
+			}
+			remote, err := compile.NewRemoteRenderer(cfg.CompilerURL, tokens, 60*time.Second)
+			if err != nil {
+				logger.Error("compiler client setup failed", "error", err)
+				os.Exit(1)
+			}
+			opts.Renderer = remote
+		} else {
+			// Local dev: compile in-process under bubblewrap.
+			opts.Runner = compile.BwrapRunner{}
+			opts.MaxParallel = cfg.MaxParallelCompiles
+		}
+		comp, err := compile.New(opts)
 		if err != nil {
 			logger.Error("compile setup failed", "error", err)
 			os.Exit(1)

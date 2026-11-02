@@ -14,19 +14,34 @@ type call struct {
 	commented  bool
 }
 
-func parseBody(src string, body model.Span, defs []definition, macros macroTexts, resume *model.Resume) error {
+func parseBody(src string, body model.Span, defs []definition, macros macroTexts, resume *model.Resume, hs *hideState) error {
 	counts := map[string]int{`\section`: 1, `\section*`: 1, `\item`: 0}
 	roles := map[string]string{`\section`: "section", `\section*`: "section", `\item`: "bullet"}
 	counts[`\textbf`] = 1
 	counts[`\begin`] = 1
 	counts[`\end`] = 1
 	slots := map[string][]model.CommandArg{}
+	for name, t := range dictionary.Commands {
+		counts[name] = len(t.Slots)
+		roles[name] = t.Role
+		slots[name] = t.args()
+	}
 	for _, def := range defs {
 		counts[def.Name] = def.ArgCount
 		roles[def.Name] = def.Role
 		slots[def.Name] = def.Args
 	}
-	calls := readCalls(src, body, counts)
+	noSkip := map[string]bool{}
+	for name, role := range roles {
+		noSkip[name] = role == "entry"
+	}
+	calls := readCalls(src, body, counts, noSkip)
+	for i := range calls {
+		if hs.inBlock(calls[i].start) {
+			calls[i].commented = true
+			calls[i].start = hs.lift(src, calls[i].start)
+		}
+	}
 	roles[`\begin`] = "listOpen"
 	roles[`\end`] = "listClose"
 	first := body[1]
@@ -38,11 +53,33 @@ func parseBody(src string, body model.Span, defs []definition, macros macroTexts
 	}
 	if first > body[0] {
 		resume.Header = &model.Header{ID: newID("h"), Span: model.Span{body[0], first}, Items: []model.Field{}}
-		extractHeader(src, resume.Header, macros)
+		extractHeaderWith(src, resume.Header, macros, latexOptions(defs))
 	}
 	var section *model.Section
 	var entry *model.Entry
+	// stack holds the open lists, outermost first; list is the innermost.
+	// Lists opened inside a bullet become that bullet's Children.
+	var stack []*model.BulletList
 	var list *model.BulletList
+	structDepth, skipDepth := 0, 0
+	unwind := func() {
+		for len(stack) > 1 {
+			closeList(stack, resume)
+			stack = stack[:len(stack)-1]
+		}
+		stack, list = nil, nil
+		skipDepth = 0
+	}
+	listEnvName := func(c call) (string, bool) {
+		if c.name != `\begin` && c.name != `\end` {
+			return "", false
+		}
+		if len(c.args) == 0 {
+			return "", false
+		}
+		name := strings.TrimSpace(src[c.args[0][0]:c.args[0][1]])
+		return name, isListEnv(name)
+	}
 	for _, c := range calls {
 		if c.start < first {
 			continue
@@ -50,22 +87,23 @@ func parseBody(src string, body model.Span, defs []definition, macros macroTexts
 		role := roles[c.name]
 		switch role {
 		case "section":
-			if len(c.args) == 0 || c.commented {
+			if len(c.args) == 0 || c.commented && !hs.inBlock(c.start) {
 				continue
 			}
+			unwind()
 			if section != nil {
 				section.Span[1] = c.start
 				dropRedundantSkillBullets(section, &resume.Report)
 				resume.Sections = append(resume.Sections, *section)
 			}
-			section = &model.Section{ID: newID("s"), Span: model.Span{c.start, body[1]}, Title: macros.field(src, c.args[0], ""), Items: []model.SectionItem{}}
+			section = &model.Section{ID: hs.takeID("s", c.start), Hidden: hs.inBlock(c.start), Span: model.Span{c.start, body[1]}, Title: macros.field(src, c.args[0], ""), Items: []model.SectionItem{}}
 			entry = nil
-			list = nil
 		case "entry":
 			if section == nil || len(c.args) == 0 {
 				continue
 			}
-			item := model.Entry{Kind: "entry", ID: newID("e"), Span: model.Span{c.start, c.end}, Hidden: c.commented, Command: &c.name, Fields: []model.Field{}}
+			unwind()
+			item := model.Entry{Kind: "entry", ID: hs.takeID("e", c.start), Span: model.Span{c.start, c.end}, Hidden: c.commented, Command: &c.name, Fields: []model.Field{}}
 			for i, arg := range c.args {
 				var slot model.Slot
 				if i < len(slots[c.name]) {
@@ -75,26 +113,38 @@ func parseBody(src string, body model.Span, defs []definition, macros macroTexts
 			}
 			section.Items = append(section.Items, model.SectionItem{Entry: &item})
 			entry = section.Items[len(section.Items)-1].Entry
-			list = nil
 			resume.Report.Entries++
+		case "paragraph":
+			if section == nil || len(c.args) == 0 || c.commented && !hs.inBlock(c.start) {
+				continue
+			}
+			unwind()
+			section.Items = append(section.Items, model.SectionItem{Paragraph: &model.Paragraph{Kind: "paragraph", ID: hs.takeID("p", c.start), Hidden: hs.inBlock(c.start), Span: model.Span{c.start, c.end}, Text: macros.field(src, c.args[0], "")}})
+		case "structure":
+			structDepth++
 		case "listOpen":
 			if section == nil {
 				continue
 			}
-			if strings.Contains(strings.ToLower(c.name), "subheading") {
-				continue
-			}
-			if c.name == `\begin` && len(c.args) == 1 && strings.TrimSpace(src[c.args[0][0]:c.args[0][1]]) != "itemize" {
-				continue
-			}
 			open := c.name
 			if c.name == `\begin` {
-				if len(c.args) == 0 || src[c.args[0][0]:c.args[0][1]] != "itemize" {
+				name, ok := listEnvName(c)
+				if !ok {
 					continue
 				}
-				open = `\begin{itemize}`
+				open = `\begin{` + name + `}`
 			}
-			newList := &model.BulletList{Kind: "bullets", ID: newID("l"), Span: model.Span{c.start, c.end}, Open: open, BulletCommand: `\item`, Bullets: []model.Bullet{}}
+			newList := &model.BulletList{Kind: "bullets", ID: hs.takeID("l", c.start), Hidden: hs.inBlock(c.start), Span: model.Span{c.start, c.end}, Open: open, BulletCommand: `\item`, Bullets: []model.Bullet{}}
+			if list != nil {
+				// Nested list: it must hang off a bullet of the enclosing list.
+				if len(list.Bullets) == 0 || skipDepth > 0 {
+					skipDepth++
+					continue
+				}
+				stack = append(stack, newList)
+				list = newList
+				continue
+			}
 			if entry != nil {
 				entry.Bullets = newList
 				entry.Span[1] = c.end
@@ -103,8 +153,9 @@ func parseBody(src string, body model.Span, defs []definition, macros macroTexts
 				section.Items = append(section.Items, model.SectionItem{Bullets: newList})
 				list = section.Items[len(section.Items)-1].Bullets
 			}
+			stack = []*model.BulletList{list}
 		case "bullet":
-			if section == nil || list == nil || c.commented && len(c.args) == 0 {
+			if section == nil || list == nil || skipDepth > 0 || c.commented && !hs.inBlock(c.start) && len(c.args) == 0 {
 				continue
 			}
 			if len(c.args) == 0 {
@@ -125,7 +176,7 @@ func parseBody(src string, body model.Span, defs []definition, macros macroTexts
 				c.args = []model.Span{{start, stop}}
 				c.end = stop
 			}
-			bullet := model.Bullet{ID: newID("b"), Span: model.Span{c.start, c.end}, Hidden: c.commented, Text: macros.field(src, c.args[0], "").Text()}
+			bullet := model.Bullet{ID: hs.takeID("b", c.start), Span: model.Span{c.start, c.end}, Hidden: c.commented, Text: macros.field(src, c.args[0], "").Text()}
 			list.Bullets = append(list.Bullets, bullet)
 			list.BulletCommand = c.name
 			list.Span[1] = c.end
@@ -134,30 +185,44 @@ func parseBody(src string, body model.Span, defs []definition, macros macroTexts
 			}
 			resume.Report.Bullets++
 		case "listClose":
-			if c.name == `\end` && (len(c.args) == 0 || src[c.args[0][0]:c.args[0][1]] != "itemize") {
+			if c.name == `\end` {
+				if _, ok := listEnvName(c); !ok {
+					continue
+				}
+			}
+			if list == nil {
+				if structDepth > 0 {
+					structDepth--
+				}
 				continue
 			}
-			if strings.Contains(strings.ToLower(c.name), "subheading") {
+			if skipDepth > 0 {
+				skipDepth--
 				continue
 			}
-			if list != nil {
-				list.Close = c.name
-				if c.name == `\end` {
-					list.Close = `\end{itemize}`
-				}
-				list.Span[1] = c.end
-				if entry != nil {
-					entry.Span[1] = c.end
-				}
-				list = nil
+			list.Close = c.name
+			if c.name == `\end` {
+				name, _ := listEnvName(c)
+				list.Close = `\end{` + name + `}`
 			}
+			list.Span[1] = c.end
+			if len(stack) > 1 {
+				closeList(stack, resume)
+				stack = stack[:len(stack)-1]
+				list = stack[len(stack)-1]
+				continue
+			}
+			if entry != nil {
+				entry.Span[1] = c.end
+			}
+			stack, list = nil, nil
 		case "skill":
 			if section == nil || len(c.args) < 2 {
 				continue
 			}
-			section.Items = append(section.Items, model.SectionItem{Skill: &model.SkillLine{Kind: "skill", ID: newID("sk"), Span: model.Span{c.start, c.end}, Hidden: c.commented, Label: macros.field(src, c.args[0], ""), Value: macros.field(src, c.args[1], "")}})
+			section.Items = append(section.Items, model.SectionItem{Skill: &model.SkillLine{Kind: "skill", ID: hs.takeID("sk", c.start), Span: model.Span{c.start, c.end}, Hidden: c.commented, Label: macros.field(src, c.args[0], ""), Value: macros.field(src, c.args[1], "")}})
 		default:
-			if c.name != `\textbf` || section == nil || len(c.args) != 1 || !strings.Contains(strings.ToLower(section.Title.Value), "skill") {
+			if c.name != `\textbf` || section == nil || len(c.args) != 1 || !skillishTitle(section.Title.Value) {
 				continue
 			}
 			if c.start < section.Title.Span[1] {
@@ -167,7 +232,38 @@ func parseBody(src string, body model.Span, defs []definition, macros macroTexts
 			for start < len(src) && (src[start] == ' ' || src[start] == '\t') {
 				start++
 			}
-			if start >= len(src) || src[start] != '{' {
+			// Labels often end a line and put the value on the next one.
+			// Skip only whitespace; inlineValueEnd still stops at the first
+			// actual line break following the value.
+			if strings.HasSuffix(strings.TrimSpace(src[c.args[0][0]:c.args[0][1]]), ":") && start < len(src) && src[start] == '\n' {
+				start++
+				for start < len(src) && (src[start] == ' ' || src[start] == '\t') {
+					start++
+				}
+			}
+			if start < len(src) && src[start] != '{' {
+				// `\textbf{Languages:} Java, Go \\` — the value is the rest of the
+				// line, up to a line break command or an unmatched brace.
+				if src[start] == '&' {
+					continue // a tabular row: handled by tabularSkills
+				}
+				end := inlineValueEnd(src, start, section.Span[1])
+				value := model.Span{start, end}
+				if value[0] < value[1] && src[value[0]] == ':' {
+					value[0]++
+				}
+				for value[0] < value[1] && (src[value[0]] == ' ' || src[value[0]] == '\t') {
+					value[0]++
+				}
+				for value[1] > value[0] && (src[value[1]-1] == ' ' || src[value[1]-1] == '\t' || src[value[1]-1] == '\r') {
+					value[1]--
+				}
+				if value[0] < value[1] {
+					section.Items = append(section.Items, model.SectionItem{Skill: &model.SkillLine{Kind: "skill", ID: hs.takeID("sk", c.start), Hidden: hs.inBlock(c.start), Span: model.Span{c.start, value[1]}, Label: macros.field(src, c.args[0], ""), Value: macros.field(src, value, "")}})
+				}
+				continue
+			}
+			if start >= len(src) {
 				continue
 			}
 			stop, ok := closingCommentGroup(src, start+1, section.Span[1])
@@ -181,12 +277,16 @@ func parseBody(src string, body model.Span, defs []definition, macros macroTexts
 			for value[0] < value[1] && src[value[0]] == ' ' {
 				value[0]++
 			}
-			section.Items = append(section.Items, model.SectionItem{Skill: &model.SkillLine{Kind: "skill", ID: newID("sk"), Span: model.Span{c.start, stop + 1}, Label: macros.field(src, c.args[0], ""), Value: macros.field(src, value, "")}})
+			section.Items = append(section.Items, model.SectionItem{Skill: &model.SkillLine{Kind: "skill", ID: hs.takeID("sk", c.start), Hidden: hs.inBlock(c.start), Span: model.Span{c.start, stop + 1}, Label: macros.field(src, c.args[0], ""), Value: macros.field(src, value, "")}})
 		}
 	}
+	unwind()
 	if section != nil {
 		dropRedundantSkillBullets(section, &resume.Report)
 		resume.Sections = append(resume.Sections, *section)
+	}
+	for i := range resume.Sections {
+		tabularSkills(src, &resume.Sections[i], macros, latexOptions(defs))
 	}
 	// Keep unsupported source between recognized nodes explicitly read-only.
 	for i := range resume.Sections {
@@ -288,7 +388,10 @@ func dropRedundantSkillBullets(section *model.Section, report *model.Report) {
 	section.Items = kept
 }
 
-func readCalls(src string, body model.Span, counts map[string]int) []call {
+// readCalls lists the known commands in body. Calls inside the arguments of
+// a command are skipped, except for noSkip commands (entries), whose raw
+// arguments may hold lists that should still be found.
+func readCalls(src string, body model.Span, counts map[string]int, noSkip map[string]bool) []call {
 	tokens := latex.Tokenize(src[body[0]:body[1]])
 	for i := range tokens {
 		tokens[i].Start += body[0]
@@ -379,7 +482,9 @@ func readCalls(src string, body model.Span, counts map[string]int) []call {
 		}
 		if len(c.args) == count {
 			result = append(result, c)
-			i = cursor - 1
+			if !noSkip[c.name] {
+				i = cursor - 1
+			}
 		}
 	}
 	return result
@@ -417,7 +522,7 @@ func listTextEnd(src string, start int, calls []call, roles map[string]string) i
 		if next.start <= start {
 			continue
 		}
-		if roles[next.name] == "bullet" || roles[next.name] == "listClose" || roles[next.name] == "section" || roles[next.name] == "entry" {
+		if roles[next.name] == "bullet" || roles[next.name] == "listOpen" || roles[next.name] == "listClose" || roles[next.name] == "section" || roles[next.name] == "entry" {
 			if next.start < end {
 				end = next.start
 			}
@@ -444,4 +549,80 @@ func closingCommentGroup(src string, start, end int) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+// latexOptions tells the tree parser how many arguments each of the
+// document's own commands takes, so multi-line calls are read as one node.
+func latexOptions(defs []definition) latex.Options {
+	opt := latex.Options{Commands: map[string]latex.Arity{}}
+	for name, t := range dictionary.Commands {
+		opt.Commands[name] = latex.Arity{Req: len(t.Slots)}
+	}
+	for _, def := range defs {
+		a := latex.Arity{Req: def.ArgCount}
+		if def.OptionalDefault != nil && def.ArgCount > 0 {
+			a = latex.Arity{Opt: 1, Req: def.ArgCount - 1}
+		}
+		opt.Commands[def.Name] = a
+	}
+	return opt
+}
+
+// closeList attaches the innermost (just closed) list to the last bullet of
+// its parent and widens the parent's spans to cover it.
+func closeList(stack []*model.BulletList, resume *model.Resume) {
+	child, parent := stack[len(stack)-1], stack[len(stack)-2]
+	last := &parent.Bullets[len(parent.Bullets)-1]
+	last.Children = append(last.Children, *child)
+	if child.Span[1] > last.Span[1] {
+		last.Span[1] = child.Span[1]
+	}
+	if last.Span[1] > parent.Span[1] {
+		parent.Span[1] = last.Span[1]
+	}
+}
+
+var skillishWords = []string{"skill", "language", "technolog", "tools", "stack", "competenc", "proficienc", "expertise"}
+
+// skillishTitle reports whether a section title names a skills section.
+func skillishTitle(title string) bool {
+	title = strings.ToLower(title)
+	for _, w := range skillishWords {
+		if strings.Contains(title, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// inlineValueEnd finds where a skill value written on the same line as its
+// label stops: at a `\\` line break, an unmatched closing brace, or the end
+// of the line.
+func inlineValueEnd(src string, start, limit int) int {
+	depth := 0
+	for i := start; i < limit; i++ {
+		switch src[i] {
+		case '\\':
+			if i+1 < limit && src[i+1] == '\\' && depth == 0 {
+				return i
+			}
+			i++
+		case '{':
+			depth++
+		case '}':
+			if depth == 0 {
+				return i
+			}
+			depth--
+		case '\n':
+			if depth == 0 {
+				return i
+			}
+		case '%':
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return limit
 }
